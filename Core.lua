@@ -861,6 +861,39 @@ function ns.RememberWhoResults()
     end
 end
 
+-- During one of Seeker's quiet lookups, the game's own /who listeners (its group finder's Who list,
+-- which opens the Looking for Group window to show results, and the Friends window's, if any) are
+-- told nothing, so no window opens or flashes and no sound plays. They hear /who again as soon as
+-- the answer arrives, or after a few seconds if none does.
+local WHO_LISTENERS = { "LFGWhoListFrame", "FriendsFrame", "WhoFrame" }
+local muted = {}
+
+local function MuteGameWho()
+    for _, name in ipairs(WHO_LISTENERS) do
+        local f = _G[name]
+        if f and not muted[f] and f.IsEventRegistered and f:IsEventRegistered("WHO_LIST_UPDATE") then
+            f:UnregisterEvent("WHO_LIST_UPDATE")
+            muted[f] = true
+        end
+    end
+end
+
+local function UnmuteGameWho()
+    for f in pairs(muted) do
+        pcall(f.RegisterEvent, f, "WHO_LIST_UPDATE")
+    end
+    wipe(muted)
+end
+
+-- A quiet lookup is over (answered or not): give /who back to the game and to chat.
+local function EndQuietLookup()
+    ns.silentWhoUntil = nil
+    UnmuteGameWho()
+    if not (ns.IsWhoPageShown and ns.IsWhoPageShown()) and C_FriendList.SetWhoToUi then
+        C_FriendList.SetWhoToUi(false)
+    end
+end
+
 -- Finding where group members are, automatically. The game only runs /who from a click or key
 -- press, and allows about one every five seconds. So Seeker keeps a queue of members whose
 -- location isn't known (filled from every search, and moved to the front for groups you hover),
@@ -930,16 +963,18 @@ function ns.PumpLocate()
         if not ns.GetKnownLocation(name) and not (asked[key] and GetTime() - asked[key] <= ASKED_AGAIN_AFTER) then
             asked[key] = GetTime()
             lastLookup = GetTime()
-            ns.silentWhoUntil = GetTime() + 6
-            if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end
+            local started = GetTime()
+            ns.silentWhoUntil = started + 6
+            MuteGameWho()
+            if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end -- results to Seeker, not chat
             local ok = pcall(C_FriendList.SendWho, 'n-"' .. (name:match("^[^-]+") or name) .. '"')
-            if not ok then ns.silentWhoUntil = nil end
-            -- If no answer comes (they logged off), hand /who back to chat anyway.
+            if not ok then
+                EndQuietLookup()
+                return
+            end
+            -- If no answer comes (they logged off), end it anyway.
             C_Timer.After(6.5, function()
-                if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then return end
-                if not (ns.IsWhoPageShown and ns.IsWhoPageShown()) and C_FriendList.SetWhoToUi then
-                    C_FriendList.SetWhoToUi(false)
-                end
+                if ns.silentWhoUntil == started + 6 then EndQuietLookup() end
             end)
             return
         end
@@ -955,11 +990,10 @@ end
 function ns.OnWhoListUpdate()
     ns.RememberWhoResults()
     if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then
-        ns.silentWhoUntil = nil
-        C_Timer.After(0.1, function()
-            if not (ns.IsWhoPageShown and ns.IsWhoPageShown()) and C_FriendList.SetWhoToUi then
-                C_FriendList.SetWhoToUi(false)
-            end
+        -- Seeker hears /who answers before the game does, so the quiet lookup is only ended on the
+        -- next frame, after the game's own listeners have (not) seen this one.
+        C_Timer.After(0, function()
+            EndQuietLookup()
             local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
             if owner and owner.item and ns.ShowEntryTooltip then ns.ShowEntryTooltip(owner, owner.item) end
         end)
