@@ -938,10 +938,6 @@ local function AddMembers(e)
         if isUnknown then unknown = unknown + 1 end
         GameTooltip:AddDoubleLine(left, where, 1, 1, 1, 1, 1, 1)
     end
-    if unknown > 0 then
-        GameTooltip:AddLine("The game only shares where the lister is. Seeker finds the others as you use the window (one every few seconds).",
-            0.5, 0.5, 0.5, true)
-    end
 end
 
 function ns.ShowEntryTooltip(owner, e)
