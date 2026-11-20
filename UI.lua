@@ -663,7 +663,7 @@ local function BuildGroupRow(row)
         s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (5 - i) * (SLOT + 1), -8)
         row.slots[i] = s
     end
-    row.raid = Text(row, "GameFontHighlightSmall")
+    row.raid = Text(row, "GameFontHighlight")
     row.raid:SetPoint("TOPRIGHT", -8, -11)
 
     row.join = RedButton(row, "Request to join", 104, 20, true)
@@ -693,10 +693,13 @@ local function PopulateGroup(row, e)
     row.join:SetShown(not e.isSelf)
     row.whisper:SetShown(not e.isSelf)
 
-    if e.maxPlayers > 5 then
+    -- More than five (a raid, or a big group): condensed by role, as the game's role-count display.
+    if e.maxPlayers > 5 or e.numMembers > 5 then
         for i = 1, 5 do row.slots[i]:Hide() end
-        row.raid:SetText(("%s%d %s%d %s%d  |cffaaaaaa%d/%d|r"):format(RoleMarkup("tank", 14), e.tanks,
-            RoleMarkup("healer", 14), e.healers, RoleMarkup("dps", 14), e.dps, e.numMembers, e.maxPlayers))
+        local c = e.counts or {}
+        local size = e.maxPlayers > 5 and ("%d/%d"):format(e.numMembers, e.maxPlayers) or tostring(e.numMembers)
+        row.raid:SetText(("%s%d  %s%d  %s%d   |cffaaaaaa%s|r"):format(RoleMarkup("tank", 16), c.TANK or e.tanks,
+            RoleMarkup("healer", 16), c.HEALER or e.healers, RoleMarkup("dps", 16), c.DAMAGER or e.dps, size))
         row.raid:Show()
         return
     end
@@ -819,27 +822,136 @@ local function AnchorBesideWindow(owner, preferLeft)
     end
 end
 
+-- Everyone in the listing, read fresh as the game's tooltip reads them: the leader
+-- (GetSearchResultLeaderInfo), then each other member (GetSearchResultPlayerInfo).
+local function ListingMembers(e)
+    local list = {}
+    local LFG = C_LFGList
+    local okL, leader = pcall(LFG.GetSearchResultLeaderInfo, e.id)
+    if okL and leader and leader.name then list[1] = leader end
+    for i = 1, e.numMembers or 1 do
+        local ok, p = pcall(LFG.GetSearchResultPlayerInfo, e.id, i)
+        if ok and p and p.name and not (p.isLeader and list[1]) then list[#list + 1] = p end
+    end
+    if #list == 0 then return e.members end
+    return list
+end
+
+-- A member's location: their zone and continent, red when a solo player is on the wrong
+-- continent for their dungeon, green when they're at it.
+local function MemberWhere(e, p)
+    local zone = p.areaName
+    if not zone or zone == "" then return "" end
+    local cont = ns.GetZoneContinent(zone)
+    local text = zone .. (cont and cont ~= zone and (", " .. cont) or "")
+    if e.isSolo and e.inDungeon then return "|cff55ff55" .. text .. "|r" end
+    if e.isSolo and e.distance == "far" then return "|cffff5555" .. text .. "|r" end
+    return "|cffbbbbbb" .. text .. "|r"
+end
+
+local function MemberRoles(e, p)
+    if e.isSolo then
+        local s = ""
+        for _, key in ipairs(ROLE_KEYS) do
+            if p.lfgRoles and p.lfgRoles[key] then s = s .. RoleMarkup(key, 14) end
+        end
+        return s
+    end
+    local key = ROLE_FROM_ASSIGNED[p.assignedRole]
+    return key and RoleMarkup(key, 14) or ""
+end
+
+local BIG_GROUP = 10 -- the game lists members one by one only up to 10
+
+local function AddMembers(e)
+    local members = ListingMembers(e)
+    if #members > BIG_GROUP then
+        -- A big group, condensed by role: each role's count, then its members by name.
+        local byRole = { tank = {}, healer = {}, dps = {}, none = {} }
+        for _, p in ipairs(members) do
+            local key = ROLE_FROM_ASSIGNED[p.assignedRole] or "none"
+            local r, g, b = ClassColor(p.classFilename)
+            byRole[key][#byRole[key] + 1] = Hex(r, g, b) .. ShortName(p.name) .. "|r"
+                .. (p.isLeader and "|A:groupfinder-icon-leader:12:12|a" or "")
+        end
+        for _, key in ipairs({ "tank", "healer", "dps", "none" }) do
+            local names = byRole[key]
+            if #names > 0 then
+                local label = key == "none" and (NO_ROLE or "No role") or ROLE_NAMES[key]
+                GameTooltip:AddLine(("%s %s (%d)"):format(key ~= "none" and RoleMarkup(key, 14) or "", label, #names), 1, 0.82, 0)
+                GameTooltip:AddLine(table.concat(names, ", "), 1, 1, 1, true)
+            end
+        end
+        return
+    end
+    for _, p in ipairs(members) do
+        local r, g, b = ClassColor(p.classFilename)
+        local left = ("%s%s%s|r |cff999999%s %s|r %s"):format(
+            (not e.isSolo and p.isLeader) and "|A:groupfinder-icon-leader:12:12|a " or "",
+            Hex(r, g, b), ShortName(p.name) or "?", LEVEL_ABBR or "Lv", p.level and tostring(p.level) or "?", MemberRoles(e, p))
+        GameTooltip:AddDoubleLine(left, MemberWhere(e, p), 1, 1, 1, 1, 1, 1)
+    end
+end
+
 function ns.ShowEntryTooltip(owner, e)
     AnchorBesideWindow(owner, not e.isSolo)
-    local ok = pcall(function()
-        GameTooltip:AddLine(ListingTitle(e) or e.leaderName or "?", 1, 1, 1)
-        for _, id in ipairs(e.activityIDs) do
-            local lo, hi = ns.GetActivityRange(id)
-            local where = ns.GetActivityContinent(id)
-            GameTooltip:AddLine(ns.GetActivityName(id) .. (lo and (" (%d-%d)"):format(lo, hi) or "")
-                .. (where and ("  |cff999999%s|r"):format(where) or ""), 0.6, 0.8, 1)
+    local info = e.info
+    -- Each part on its own, so one that fails can't hide the rest.
+    local function Part(fn)
+        local ok = pcall(fn)
+        return ok
+    end
+
+    -- Title: the listing's name if it has one, else the leader.
+    Part(function()
+        local leader = e.leader or {}
+        local title = ListingTitle(e)
+        if title then
+            GameTooltip:AddLine(title, 1, 1, 1)
+        else
+            GameTooltip:AddLine(ShortName(e.leaderName) or "?", ClassColor(leader.classFilename))
         end
-        local info = e.info
+        if info.newPlayerFriendly then
+            GameTooltip:AddLine((HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a " or "")
+                .. (LFG_LIST_NEW_PLAYER_FRIENDLY_HEADER or LFG_LIST_NEW_PLAYER_FRIENDLY or "New Player Friendly"), 0.1, 1, 0.1)
+        end
+    end)
+
+    -- Everyone in it, with where they are.
+    Part(function()
+        GameTooltip:AddLine(" ")
+        AddMembers(e)
+    end)
+
+    -- The group's note.
+    Part(function()
         local comment = info.comment
-        if type(comment) == "string" and comment ~= "" then
-            GameTooltip:AddLine(comment, 0.9, 0.9, 0.9, true)
+        if comment and comment ~= "" then
+            GameTooltip:AddLine(" ")
+            local okF, text = pcall(string.format, LFG_LIST_COMMENT_FORMAT or "\"%s\"", comment)
+            GameTooltip:AddLine(okF and text or comment, 0.85, 0.85, 0.85, true)
+        end
+    end)
+
+    -- Member count by role (the game's line), playstyle, voice chat.
+    Part(function()
+        GameTooltip:AddLine(" ")
+        if e.isSolo then
+            if LFG_LIST_TOOLTIP_MEMBERS_SIMPLE then
+                GameTooltip:AddLine(LFG_LIST_TOOLTIP_MEMBERS_SIMPLE:format(e.numMembers), 1, 0.82, 0)
+            end
+        else
+            local c = e.counts or {}
+            local tanks, healers, dps = c.TANK or e.tanks, c.HEALER or e.healers, c.DAMAGER or e.dps
+            if LFG_LIST_TOOLTIP_MEMBERS then
+                GameTooltip:AddLine(LFG_LIST_TOOLTIP_MEMBERS:format(e.numMembers, tanks, healers, dps), 1, 0.82, 0)
+            else
+                GameTooltip:AddLine(("Members: %d (%d/%d/%d)"):format(e.numMembers, tanks, healers, dps), 1, 0.82, 0)
+            end
         end
         if info.generalPlaystyle and info.generalPlaystyle ~= 0 and GetGeneralPlaystyleString then
             local okP, s = pcall(GetGeneralPlaystyleString, info.generalPlaystyle)
-            if okP and s then GameTooltip:AddLine((PLAYSTYLE or "Playstyle") .. ": " .. s, 0.8, 0.8, 0.8) end
-        end
-        if info.newPlayerFriendly then
-            GameTooltip:AddLine(LFG_LIST_NEW_PLAYER_FRIENDLY or "New player friendly", 0.5, 1, 0.5)
+            if okP and s then GameTooltip:AddLine((PLAYSTYLE or "Playstyle") .. ": |cff19ff19" .. s .. "|r", 0.8, 0.8, 0.8) end
         end
         if Enum.LFGEntryVoiceMode and info.voiceMode and info.voiceMode ~= Enum.LFGEntryVoiceMode.None then
             local labels = {
@@ -851,45 +963,32 @@ function ns.ShowEntryTooltip(owner, e)
                 GameTooltip:AddLine((VOICE_CHAT or "Voice chat") .. ": " .. labels[info.voiceMode], 0.8, 0.8, 0.8)
             end
         end
-        -- Bosses this group has already killed (the game's "Completed encounters").
+    end)
+
+    -- What they're listed for, and bosses already down.
+    Part(function()
+        GameTooltip:AddLine(" ")
+        for _, id in ipairs(e.activityIDs) do
+            local lo, hi = ns.GetActivityRange(id)
+            local where = ns.GetActivityContinent(id)
+            GameTooltip:AddLine(ns.GetActivityName(id) .. (lo and (" (%d-%d)"):format(lo, hi) or "")
+                .. (where and ("  |cff999999%s|r"):format(where) or ""), 0.6, 0.8, 1)
+        end
         if not e.isSolo and C_LFGList.GetSearchResultEncounterInfo then
             local okE, done = pcall(C_LFGList.GetSearchResultEncounterInfo, e.id)
             if okE and done and #done > 0 then
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine(BOSSES_KILLED or "Bosses killed", 1, 0.82, 0)
+                GameTooltip:AddLine(LFG_LIST_BOSSES_DEFEATED or BOSSES_KILLED or "Bosses defeated:", 1, 0.82, 0)
                 for _, boss in ipairs(done) do GameTooltip:AddLine("    " .. boss, 0.9, 0.5, 0.5) end
             end
         end
-        GameTooltip:AddLine(" ")
-        if not e.isSolo and e.counts then
-            local c = e.counts
-            GameTooltip:AddLine(("%s %d  %s %d  %s %d"):format(RoleMarkup("tank"), c.TANK or e.tanks, RoleMarkup("healer"),
-                c.HEALER or e.healers, RoleMarkup("dps"), c.DAMAGER or e.dps), 1, 1, 1)
+        if e.isSolo and e.distance == "far" and e.continent then
+            GameTooltip:AddLine(("On %s, but the dungeon is in %s."):format(e.continent, e.dungeonContinent or "another continent"),
+                1, 0.3, 0.3, true)
         end
-        GameTooltip:AddLine(e.isSolo and "Player" or ("Party (%d/%d)"):format(e.numMembers, e.maxPlayers), 1, 0.82, 0)
-        for _, p in ipairs(e.members) do
-            local r, g, b = ClassColor(p.classFilename)
-            local left = ("%s%s|r%s"):format(Hex(r, g, b), p.name or "?", p.isLeader and " |cffffd100(leader)|r" or "")
-            local role
-            if e.isSolo then
-                role = ""
-                for _, key in ipairs(ROLE_KEYS) do
-                    if p.lfgRoles and p.lfgRoles[key] then role = role .. RoleMarkup(key) end
-                end
-            else
-                local key = ROLE_FROM_ASSIGNED[p.assignedRole]
-                role = key and RoleMarkup(key) or ""
-            end
-            GameTooltip:AddDoubleLine(left, ("%s  Lv %s %s"):format(role, p.level and tostring(p.level) or "?", p.className or ""),
-                1, 1, 1, 0.85, 0.85, 0.85)
-            if p.areaName and p.areaName ~= "" then
-                local cont = ns.GetZoneContinent(p.areaName)
-                GameTooltip:AddLine("    " .. p.areaName .. (cont and (", " .. cont) or ""), 0.6, 0.6, 0.6)
-            end
-        end
-        if e.isSolo and e.distance == "far" then
-            GameTooltip:AddLine(("On %s, but the dungeon is in %s."):format(e.continent, e.dungeonContinent), 1, 0.3, 0.3, true)
-        end
+    end)
+
+    -- XP for you, and how long it's been listed.
+    Part(function()
         GameTooltip:AddLine(" ")
         local c = XP_COLORS[e.xpStatus or "unknown"]
         GameTooltip:AddLine("XP: " .. XP_LABELS[e.xpStatus or "unknown"], c[1], c[2], c[3])
@@ -900,7 +999,7 @@ function ns.ShowEntryTooltip(owner, e)
         end
         GameTooltip:AddLine(("Listed %s ago"):format(FormatAge(e.age)), 0.5, 0.5, 0.5)
     end)
-    if not ok then GameTooltip:AddLine("(details unavailable right now)", 0.6, 0.6, 0.6) end
+
     GameTooltip:Show()
 end
 

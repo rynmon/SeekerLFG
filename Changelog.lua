@@ -7,6 +7,21 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.1",
+		date = "20 November 2026",
+		sections = {
+			{ "Better tooltips", {
+				{ "Everyone in the group.", "A group's tooltip now lists every member (leader first, with the crown), each with their level, role and where they are, read fresh from the game as its own tooltip does." },
+				{ "The group's note.", "The listing's note now shows in the tooltip. It was missing before." },
+				{ "Where each player is.", "Every player's zone and continent are on their tooltip line, red when they're on the wrong continent for their dungeon and green when they're already there." },
+				{ "Sturdier.", "If one part of a tooltip can't be read, the rest still shows." },
+			} },
+			{ "Big groups", {
+				{ "Condensed by role.", "Groups of more than five now show a count per role in the list instead of five seats, and groups of more than ten list their members under Tanks, Healers and DPS in the tooltip." },
+			} },
+		},
+	},
+	{
 		version = "0.9.0",
 		date = "20 November 2026",
 		sections = {
