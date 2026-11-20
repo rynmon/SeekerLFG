@@ -604,9 +604,25 @@ local function ActivityName(e)
     return name
 end
 
--- Line 3: playstyle (green, as the game shows it), new player friendly, Discord.
+-- Friends and guildmates in a listing, as a short badge.
+local function SocialText(e)
+    local parts = {}
+    if (e.friends or 0) > 0 then
+        local icon = HasAtlas("groupfinder-icon-friend") and "|A:groupfinder-icon-friend:14:14|a" or ""
+        parts[#parts + 1] = ("%s|cff66ccff%d %s|r"):format(icon, e.friends, e.friends == 1 and "friend" or "friends")
+    end
+    if (e.guildmates or 0) > 0 then
+        parts[#parts + 1] = ("|cff40ff40%d %s|r"):format(e.guildmates, e.guildmates == 1 and "guildmate" or "guildmates")
+    end
+    return table.concat(parts, "  ")
+end
+ns.SocialText = SocialText
+
+-- Line 3: friends and guildmates, playstyle (green, as the game shows it), new player friendly, Discord.
 local function ExtrasText(e)
     local extras = {}
+    local social = SocialText(e)
+    if social ~= "" then extras[#extras + 1] = social end
     local info = e.info
     if info.generalPlaystyle and info.generalPlaystyle ~= 0 and GetGeneralPlaystyleString then
         local ok, s = pcall(GetGeneralPlaystyleString, info.generalPlaystyle)
@@ -915,6 +931,12 @@ function ns.ShowEntryTooltip(owner, e)
             GameTooltip:AddLine((HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a " or "")
                 .. (LFG_LIST_NEW_PLAYER_FRIENDLY_HEADER or LFG_LIST_NEW_PLAYER_FRIENDLY or "New Player Friendly"), 0.1, 1, 0.1)
         end
+    end)
+
+    -- Friends and guildmates in it.
+    Part(function()
+        local social = SocialText(e)
+        if social ~= "" then GameTooltip:AddLine(social, 1, 1, 1) end
     end)
 
     -- Everyone in it, with where they are.
@@ -1838,7 +1860,21 @@ function ns.ShowOptionsMenu(owner)
             function() ns.SetMinimapButton(ns.db.minimapButton == false) end)
         root:CreateDivider()
         root:CreateButton("Open the game's Looking for Group window", function() ns.OpenNative() end)
+        local sort = root:CreateButton("Sort")
+        for _, m in ipairs(ns.SORT_MODES) do
+            sort:CreateRadio(m.label, function() return ns.db.sortMode == m.key end, function()
+                ns.db.sortMode = m.key
+                ns.Render()
+            end)
+        end
+        local alerts = root:CreateButton("Alerts")
+        local A = ns.db.alerts
+        alerts:CreateCheckbox("Tell me about new matches", function() return A.enabled end, function() A.enabled = not A.enabled end)
+        alerts:CreateCheckbox("Only ones with full XP", function() return A.fullXPOnly end, function() A.fullXPOnly = not A.fullXPOnly end)
+        alerts:CreateCheckbox("Play a sound", function() return A.sound end, function() A.sound = not A.sound end)
+        alerts:CreateCheckbox("Flash the game's icon", function() return A.flash end, function() A.flash = not A.flash end)
         root:CreateButton("Messages...", function() ns.ShowMessages() end)
+        root:CreateButton("All settings...", function() ns.OpenSettings() end)
         root:CreateButton("Reset window position and size", function() SlashCmdList.SEEKERLFG("reset") end)
     end)
 end
@@ -1871,6 +1907,7 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2)
         ns.Render()
     elseif event == "LFG_LIST_SEARCH_RESULTS_RECEIVED" then
         ns.searching, ns.searchFailed = false, false
+        ns.CheckNewMatches()
         ns.Render()
     elseif event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
         -- As the game does: a new listing (or an update you made) plays the queue sound and
@@ -1932,6 +1969,10 @@ SlashCmdList.SEEKERLFG = function(msg)
         ns.SetMinimapButton(ns.db.minimapButton == false)
     elseif msg == "messages" then
         ns.ShowMessages()
+    elseif msg:match("^selftest") or msg:match("^test") then
+        ns.SelfTest(msg:match("all") and "all" or nil)
+    elseif msg == "settings" or msg == "options" then
+        ns.OpenSettings()
     elseif msg == "replace" then
         ns.SetReplaceNative(not ns.db.replaceNative)
     elseif msg == "blizzard" then
@@ -1951,4 +1992,21 @@ end
 
 function SeekerLFG_OnAddonCompartmentClick()
     ns.Toggle()
+end
+
+-- Keybindings (Bindings.xml). A key press counts as a click, so it can run a search even with the
+-- window closed; new matches are announced in chat.
+BINDING_NAME_SEEKERLFG_TOGGLE = "Open or close Seeker LFG"
+BINDING_NAME_SEEKERLFG_SEARCH = "Search again (announces new matches)"
+
+function SeekerLFG_BindingToggle()
+    ns.Toggle()
+end
+
+function SeekerLFG_BindingSearch()
+    if ns.db and not ns.db.categoryID and not ns.db.searchSelf then
+        local cats = ns.GetCategories()
+        ns.db.categoryID = cats[1] and cats[1].id
+    end
+    if ns.DoSearch() then ns.Render() end
 end

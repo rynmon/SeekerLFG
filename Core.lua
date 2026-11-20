@@ -17,6 +17,13 @@ local defaults = {
     useWhisperMessenger = true, -- whisper through Whisper Messenger when it's installed
     minimapAngle = 200,
     tab = "browse",
+    sortMode = "xp",       -- see ns.SORT_MODES
+    alerts = {
+        enabled = true,    -- tell me about new listings that match my filters
+        fullXPOnly = false,
+        sound = true,
+        flash = true,      -- flash the game's taskbar icon when it's in the background
+    },
     filters = {
         text = "",
         xpMode = "strict",   -- "off" | "strict" | "lenient"
@@ -240,10 +247,42 @@ end
 ---------------------------------------------------------------------------
 -- Continents: where a dungeon is, and where a player is standing
 ---------------------------------------------------------------------------
-local KALIMDOR, EASTERN = "Kalimdor", "Eastern Kingdoms"
+-- Which continent each dungeon's entrance is on, by the instance's map ID (the activity's mapID),
+-- so it works in every client language. Continent names come from the game's own map data,
+-- in your language, so they match the zone-to-continent lookup below.
+local KALIMDOR_MAP, EASTERN_MAP = 1414, 1415
+local KALIMDOR, EASTERN = "KALIMDOR", "EASTERN"
+local INSTANCE_CONTINENT = {
+    [389] = KALIMDOR, -- Ragefire Chasm
+    [43] = KALIMDOR,  -- Wailing Caverns
+    [48] = KALIMDOR,  -- Blackfathom Deeps
+    [47] = KALIMDOR,  -- Razorfen Kraul
+    [129] = KALIMDOR, -- Razorfen Downs
+    [209] = KALIMDOR, -- Zul'Farrak
+    [349] = KALIMDOR, -- Maraudon
+    [429] = KALIMDOR, -- Dire Maul
+    [249] = KALIMDOR, -- Onyxia's Lair
+    [509] = KALIMDOR, -- Ruins of Ahn'Qiraj
+    [531] = KALIMDOR, -- Temple of Ahn'Qiraj
+    [36] = EASTERN,   -- The Deadmines
+    [33] = EASTERN,   -- Shadowfang Keep
+    [34] = EASTERN,   -- The Stockade
+    [90] = EASTERN,   -- Gnomeregan
+    [189] = EASTERN,  -- Scarlet Monastery
+    [70] = EASTERN,   -- Uldaman
+    [109] = EASTERN,  -- Sunken Temple
+    [230] = EASTERN,  -- Blackrock Depths
+    [229] = EASTERN,  -- Blackrock Spire
+    [289] = EASTERN,  -- Scholomance
+    [329] = EASTERN,  -- Stratholme
+    [409] = EASTERN,  -- Molten Core
+    [469] = EASTERN,  -- Blackwing Lair
+    [309] = EASTERN,  -- Zul'Gurub
+    [533] = EASTERN,  -- Naxxramas
+}
 
--- Matched against the activity's name (lowercase, substring).
-local DUNGEON_CONTINENT = {
+-- Fallback for activities without a known map ID: English names (lowercase, substring).
+local DUNGEON_NAMES = {
     { "ragefire", KALIMDOR }, { "wailing caverns", KALIMDOR }, { "blackfathom", KALIMDOR },
     { "razorfen", KALIMDOR }, { "zul'farrak", KALIMDOR }, { "maraudon", KALIMDOR },
     { "dire maul", KALIMDOR }, { "onyxia", KALIMDOR }, { "ahn'qiraj", KALIMDOR },
@@ -254,6 +293,19 @@ local DUNGEON_CONTINENT = {
     { "blackwing", EASTERN }, { "zul'gurub", EASTERN }, { "naxxramas", EASTERN },
 }
 
+local continentNames
+local function ContinentName(key)
+    if not continentNames then
+        continentNames = { [KALIMDOR] = "Kalimdor", [EASTERN] = "Eastern Kingdoms" }
+        if C_Map and C_Map.GetMapInfo then
+            local k, e = C_Map.GetMapInfo(KALIMDOR_MAP), C_Map.GetMapInfo(EASTERN_MAP)
+            if k and k.name then continentNames[KALIMDOR] = k.name end
+            if e and e.name then continentNames[EASTERN] = e.name end
+        end
+    end
+    return continentNames[key]
+end
+
 local activityContinent = {}
 function ns.GetActivityContinent(id)
     if not id then return nil end
@@ -261,13 +313,26 @@ function ns.GetActivityContinent(id)
     if c == nil then
         c = false
         local a = ns.GetActivity(id)
-        local name = ((a and a.fullName) or ns.GetActivityName(id)):lower()
-        for _, pair in ipairs(DUNGEON_CONTINENT) do
-            if name:find(pair[1], 1, true) then c = pair[2] break end
+        local key = a and a.mapID and INSTANCE_CONTINENT[a.mapID]
+        if not key then
+            local name = ((a and a.fullName) or ns.GetActivityName(id)):lower()
+            for _, pair in ipairs(DUNGEON_NAMES) do
+                if name:find(pair[1], 1, true) then key = pair[2] break end
+            end
         end
+        c = key and ContinentName(key) or false
         activityContinent[id] = c
     end
     return c or nil
+end
+
+-- The instance's own name in your language (for "already at the dungeon").
+function ns.GetActivityInstanceName(id)
+    local a = ns.GetActivity(id)
+    if a and a.mapID and GetRealZoneText then
+        local ok, name = pcall(GetRealZoneText, a.mapID)
+        if ok and name and name ~= "" then return name end
+    end
 end
 
 -- Zone name -> continent name, from the game's own map tree.
@@ -344,7 +409,10 @@ function ns.EvaluateDistance(e)
         for _, id in ipairs(acts) do
             local a = ns.GetActivity(id)
             local dungeon = Bare(a and a.fullName or ns.GetActivityName(id))
-            if dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true)) then
+            -- The instance's own name, in your language, as the game reports where they are.
+            local instance = Bare(ns.GetActivityInstanceName(id))
+            if (instance ~= "" and here == instance)
+                or (dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true))) then
                 e.distance, e.inDungeon = "near", true
                 e.dungeonContinent = ns.GetActivityContinent(id)
                 e.continent = e.continent or e.dungeonContinent
@@ -430,6 +498,9 @@ local function BuildEntry(id, myActivities)
         activityIDs = info.activityIDs or {},
         age = info.age or 0,
         isSelf = info.hasSelf and true or false,
+        -- Friends and guildmates in the listing, as the game counts them.
+        friends = (info.numBNetFriends or 0) + (info.numCharFriends or 0),
+        guildmates = info.numGuildMates or 0,
     }
     local n = info.numMembers or 1
     for i = 1, n do
@@ -641,10 +712,39 @@ function ns.AnyOn(t)
     return false
 end
 
--- Your listing first, then listings for your listed activities (as the game sorts), then XP, newest.
+-- How the lists can be sorted. Whatever the choice, your own listing comes first, then listings
+-- for your listed activities (as the game sorts), then ones with friends or guildmates in them.
+ns.SORT_MODES = {
+    { key = "xp", label = "Best XP first" },
+    { key = "newest", label = "Newest first" },
+    { key = "oldest", label = "Oldest first" },
+    { key = "levelLow", label = "Level, low to high" },
+    { key = "levelHigh", label = "Level, high to low" },
+    { key = "size", label = "Biggest groups first" },
+}
+
+local function Social(e) return (e.friends or 0) + (e.guildmates or 0) end
+
 local function SortEntries(a, b)
     if a.isSelf ~= b.isSelf then return a.isSelf end
     if (a.matchesMine or false) ~= (b.matchesMine or false) then return a.matchesMine or false end
+    local sa, sb = Social(a) > 0, Social(b) > 0
+    if sa ~= sb then return sa end
+    local mode = ns.db.sortMode
+    local la, lb = a.maxLevel or 0, b.maxLevel or 0
+    if mode == "newest" or mode == "oldest" then
+        if (a.age or 0) ~= (b.age or 0) then
+            if mode == "newest" then return (a.age or 0) < (b.age or 0) end
+            return (a.age or 0) > (b.age or 0)
+        end
+    elseif mode == "levelLow" or mode == "levelHigh" then
+        if la ~= lb then
+            if mode == "levelLow" then return la < lb end
+            return la > lb
+        end
+    elseif mode == "size" then
+        if a.numMembers ~= b.numMembers then return a.numMembers > b.numMembers end
+    end
     local ra, rb = XP_RANK[a.xpStatus] or 0, XP_RANK[b.xpStatus] or 0
     if ra ~= rb then return ra > rb end
     if (a.age or 0) ~= (b.age or 0) then return (a.age or 0) < (b.age or 0) end
@@ -661,6 +761,51 @@ function ns.GetFiltered()
     table.sort(fg, SortEntries)
     table.sort(fp, SortEntries)
     return fg, fp, #groups, #players
+end
+
+---------------------------------------------------------------------------
+-- New-match alerts
+---------------------------------------------------------------------------
+-- Every listing seen this session. The first results after logging in are only remembered,
+-- so you're told about what's new from then on, not about everything already listed.
+local seen, primed = {}, false
+
+local function AlertSound()
+    local kit = SOUNDKIT and (SOUNDKIT.UI_GROUP_FINDER_RECEIVE_APPLICATION or SOUNDKIT.RAID_WARNING or SOUNDKIT.READY_CHECK)
+    if kit then PlaySound(kit, "Master") end
+end
+
+-- Called whenever search results arrive (from Seeker's search, a keybinding, or the game's own).
+function ns.CheckNewMatches()
+    local a = ns.db.alerts
+    local ok, groups, players = pcall(ns.GetFiltered)
+    if not ok then return end
+    local fresh = {}
+    for _, list in ipairs({ groups, players }) do
+        for _, e in ipairs(list) do
+            if not seen[e.id] then
+                seen[e.id] = true
+                if primed and not e.isSelf and (not a.fullXPOnly or e.xpStatus == "safe") then
+                    fresh[#fresh + 1] = e
+                end
+            end
+        end
+    end
+    primed = true
+    if not a.enabled or #fresh == 0 then return end
+
+    local parts = {}
+    for i = 1, math.min(3, #fresh) do
+        local e = fresh[i]
+        local act = e.xpActivity or RelevantActivities(e)[1]
+        local kind = e.isSolo and "player" or ("group %d/%d"):format(e.numMembers, e.maxPlayers)
+        parts[#parts + 1] = ("%s (%s, %s, lvl %s)"):format(ns.ShortName and ns.ShortName(e.leaderName) or e.leaderName or "?",
+            kind, act and ns.GetActivityName(act) or "?", e.maxLevel and tostring(e.maxLevel) or "?")
+    end
+    local more = #fresh > 3 and (" and %d more"):format(#fresh - 3) or ""
+    ns.Print(("%d new: %s%s. |cff999999/seeker to open|r"):format(#fresh, table.concat(parts, ", "), more))
+    if a.sound then AlertSound() end
+    if a.flash and FlashClientIcon then FlashClientIcon() end
 end
 
 ---------------------------------------------------------------------------

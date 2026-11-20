@@ -7,6 +7,23 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.3",
+		date = "20 November 2026",
+		sections = {
+			{ "New", {
+				{ "Friends and guildmates.", "Listings with your friends or guildmates in them show a badge, sort near the top, and say who in the tooltip." },
+				{ "Alerts.", "When a search turns up new groups or players that pass your filters, they're listed in chat with a sound, and the game's icon flashes if it's in the background. Bind Search again (Keybindings > Seeker LFG) to search with the window closed. Change it in Cog > Alerts." },
+				{ "Sort.", "Cog > Sort: best XP, newest, oldest, level either way, or biggest groups first." },
+				{ "Warnings when listing.", "Dungeons you'd get no XP from are marked, and before you post you're told about those and any instance you're saved to." },
+				{ "Options page.", "Every setting is also in the game's Options > AddOns > Seeker LFG." },
+				{ "Self-test.", "/seeker selftest checks everything Seeker relies on in the game, for bug reports." },
+			} },
+			{ "Fixed", {
+				{ "Any language.", "Far-away players are now spotted on every client language: a dungeon's continent comes from the game's map data, not its English name." },
+			} },
+		},
+	},
+	{
 		version = "0.9.2",
 		date = "20 November 2026",
 		sections = {

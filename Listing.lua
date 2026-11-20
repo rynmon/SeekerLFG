@@ -17,6 +17,7 @@ local L = {
 ns.Listing = L
 
 local LFG = C_LFGList or {}
+local XPFor -- defined with the listing warnings
 local ROW_H = 22 -- the game's own activity row spacing
 
 -- A native font object with its own colour (a reused row may have been coloured before).
@@ -284,6 +285,40 @@ local function InstanceLock(activityID)
     end
 end
 
+-- What a dungeon would give you in XP at your level (the 12-level rule): "safe", "partial", "none".
+XPFor = function(activityID)
+    local lo, hi = ns.GetActivityRange(activityID)
+    if not lo then return nil end
+    local me = UnitLevel("player") or 0
+    if me <= lo + ns.XP_GAP then return "safe" end
+    if me <= hi + ns.XP_GAP then return "partial" end
+    return "none"
+end
+
+-- Things worth knowing before you post (never blockers): activities you'd get no XP from, and
+-- instances you're already saved to.
+function L.Warnings()
+    local noXP, saved = {}, {}
+    for id, on in pairs(L.selected) do
+        if on then
+            if XPFor(id) == "none" then noXP[#noXP + 1] = ns.GetActivityName(id) end
+            local done, total = InstanceLock(id)
+            if done then saved[#saved + 1] = ("%s (%d/%d)"):format(ns.GetActivityName(id), done, total) end
+        end
+    end
+    table.sort(noXP)
+    table.sort(saved)
+    local lines = {}
+    local function List(t)
+        if #t > 3 then return table.concat(t, ", ", 1, 3) .. (" and %d more"):format(#t - 3) end
+        return table.concat(t, ", ")
+    end
+    if #noXP > 0 then lines[#lines + 1] = "No XP for you in: " .. List(noXP) end
+    if #saved > 0 then lines[#lines + 1] = "You're saved to: " .. List(saved) end
+    return table.concat(lines, ".  ")
+end
+
+
 ---------------------------------------------------------------------------
 -- Page
 ---------------------------------------------------------------------------
@@ -455,6 +490,13 @@ local function RenderActivities()
                     row.level:SetText((LFD_LEVEL_FORMAT_RANGE or "Level %d - %d"):format(lo, hi))
                 end
                 row.lock:SetShown(InstanceLock(id) ~= nil)
+                -- What it'd give you in XP, after the level range.
+                local st = XPFor(id)
+                if st == "none" then
+                    row.level:SetText(row.level:GetText() .. "  |cffff5555No XP|r")
+                elseif st == "partial" then
+                    row.level:SetText(row.level:GetText() .. "  |cffffd133Some XP|r")
+                end
             end
         end
     end
@@ -599,7 +641,14 @@ function ns.RefreshListingPage(filtersChanged)
     end
     local blocker = L.PostBlocker()
     post:SetEnabled(blocker == nil)
-    page.error:SetText(blocker or "")
+    if blocker and blocker ~= "" then
+        page.error:SetTextColor(1, 0.4, 0.4)
+        page.error:SetText(blocker)
+    else
+        -- Not a blocker, just worth knowing before you post: no XP, or already saved.
+        page.error:SetTextColor(1, 0.82, 0.2)
+        page.error:SetText(L.Warnings())
+    end
     page.back:SetText(listed and (LFG_LIST_UNLIST or "Delist") or (BACK or "Back"))
     page.back:SetEnabled(listed and canEdit or (not listed and L.categoryID ~= nil))
 end

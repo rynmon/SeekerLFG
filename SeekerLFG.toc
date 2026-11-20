@@ -2,7 +2,7 @@
 ## Title: Seeker LFG
 ## Notes: Looking for Group for WoW Forever, groups and players side by side, with filters that keep your dungeon runs earning XP.
 ## Author: rynmon
-## Version: 0.9.2
+## Version: 0.9.3
 ## SavedVariables: SeekerLFGDB
 ## OptionalDeps: WhisperMessenger
 ## IconTexture: Interface\LFGFrame\UI-LFG-PORTRAIT
@@ -15,4 +15,6 @@ UI.lua
 Listing.lua
 Who.lua
 Messages.lua
+Settings.lua
+Diagnostics.lua
 Minimap.lua

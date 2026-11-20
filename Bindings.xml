@@ -1,0 +1,8 @@
+<Bindings>
+	<Binding name="SEEKERLFG_TOGGLE" category="Seeker LFG">
+		SeekerLFG_BindingToggle()
+	</Binding>
+	<Binding name="SEEKERLFG_SEARCH" category="Seeker LFG">
+		SeekerLFG_BindingSearch()
+	</Binding>
+</Bindings>

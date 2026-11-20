@@ -49,6 +49,13 @@ You can use these placeholders, which are filled in for each listing:
 
 For example, `Hey [target], [level] [class] here, free for [dungeon]?` becomes "Hey Skeron, 21 Mage here, free for Deadmines?". The Messages window shows a preview as you type.
 
+## Friends, alerts and sorting
+
+- Listings with your **friends or guildmates** in them show a badge and sort near the top.
+- **Alerts:** when a search turns up new groups or players that pass your filters, they're listed in chat with a sound, and the game's icon flashes if it's in the background. The game only lets searches run from a key press or click, so bind **Search again** (Options > Keybindings > Seeker LFG) to check with the window closed.
+- **Sort** (cog menu): best XP, newest, oldest, level either way, or biggest groups first.
+- When listing yourself, dungeons you'd get **no XP** from are marked. Before you post, you're also told about any instance you're **saved to**.
+
 ## Usage
 
 - `/seeker` (or `/slfg`) opens and closes the window, as do the minimap button and the addon compartment.
@@ -58,7 +65,8 @@ For example, `Hey [target], [level] [class] here, free for [dungeon]?` becomes "
   - **Whisper with Whisper Messenger**.
   - **Show minimap button**.
 - Drag the corner grip, or use Ctrl + mouse wheel, to resize the window.
-- `/seeker reset` resets the window position and size, and `/seeker debug` prints what the game's LFG API reports, for bug reports.
+- Every setting is also in the game's **Options > AddOns > Seeker LFG**.
+- `/seeker reset` resets the window position and size. `/seeker selftest` checks everything Seeker relies on in the game, and `/seeker debug` prints what the game's LFG API reports; both help with bug reports. [TESTING.md](TESTING.md) has a full test checklist.
 
 ## Install
 
