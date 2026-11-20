@@ -89,7 +89,10 @@ function ns.SetupMinimapButton()
     -- still, then watching while you're listed. Falls back to its still art, then the portrait.
     local eye = ns.UI and ns.UI.TryCreate("Frame", nil, b, "LFGEyeTemplate")
     if eye and eye.SetStaticMode then
-        eye:SetSize(24, 24)
+        -- The template is built for a 45px eye and its glows use their art's own size, so a smaller
+        -- frame doesn't shrink them: scale the whole eye down to the minimap button's 20px icon.
+        eye:SetSize(45, 45)
+        eye:SetScale(20 / 45)
         eye:SetPoint("CENTER", 0, 0)
         eye:SetFrameLevel(b:GetFrameLevel() + 1)
         eye:SetStaticMode(true)
