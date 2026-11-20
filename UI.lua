@@ -856,10 +856,16 @@ end
 -- A member's location: their zone and continent, red when a solo player is on the wrong
 -- continent for their dungeon, green when they're at it.
 local function MemberWhere(e, p)
-    local zone = p.areaName
-    if not zone or zone == "" then return "" end
+    local zone, age = p.areaName, nil
+    if not zone or zone == "" then
+        zone, age = ns.GetKnownLocation(p.name)
+        if not zone then return "|cff808080?|r", true end
+    end
     local cont = ns.GetZoneContinent(zone)
     local text = zone .. (cont and cont ~= zone and (", " .. cont) or "")
+    if age then
+        text = text .. (" |cff808080(%s ago)|r"):format(FormatAge(age))
+    end
     if e.isSolo and e.inDungeon then return "|cff55ff55" .. text .. "|r" end
     if e.isSolo and e.distance == "far" then return "|cffff5555" .. text .. "|r" end
     return "|cffbbbbbb" .. text .. "|r"
@@ -900,12 +906,19 @@ local function AddMembers(e)
         end
         return
     end
+    local unknown = 0
     for _, p in ipairs(members) do
         local r, g, b = ClassColor(p.classFilename)
         local left = ("%s%s%s|r |cff999999%s %s|r %s"):format(
             (not e.isSolo and p.isLeader) and "|A:groupfinder-icon-leader:12:12|a " or "",
             Hex(r, g, b), ShortName(p.name) or "?", LEVEL_ABBR or "Lv", p.level and tostring(p.level) or "?", MemberRoles(e, p))
-        GameTooltip:AddDoubleLine(left, MemberWhere(e, p), 1, 1, 1, 1, 1, 1)
+        local where, isUnknown = MemberWhere(e, p)
+        if isUnknown then unknown = unknown + 1 end
+        GameTooltip:AddDoubleLine(left, where, 1, 1, 1, 1, 1, 1)
+    end
+    if unknown > 0 then
+        GameTooltip:AddLine("The game only shares where the lister is. Right-click > Find where members are.",
+            0.5, 0.5, 0.5, true)
     end
 end
 
@@ -1044,6 +1057,7 @@ function ns.EntryMenu(owner, e)
             invite:SetEnabled(ns.CanInvite(e))
         else
             root:CreateButton("Request to join", function() ns.RequestToJoin(e) end)
+            root:CreateButton("Find where members are", function() ns.LocateMembers(ListingMembers(e)) end)
         end
         root:CreateDivider()
         root:CreateButton(LFG_LIST_REPORT_GROUP_FOR or "Report listing", function() ns.ReportListing(e, false) end)
@@ -1807,6 +1821,10 @@ local function TryAttachLauncher()
                 if not ns.db or ns.allowNative then return end
                 -- Who results for our Who tab: the game pops its own window open to show them
                 -- (it does that for every /who that goes to the interface). Keep them in ours.
+                if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then
+                    HideNative(self) -- a quiet member lookup: no window
+                    return
+                end
                 if ns.whoUntil and GetTime() < ns.whoUntil then
                     HideNative(self)
                     ns.Show("who")

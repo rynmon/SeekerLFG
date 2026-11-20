@@ -25,6 +25,10 @@ local function Filters()
     return f
 end
 
+function ns.IsWhoPageShown()
+    return page and page:IsShown() or false
+end
+
 function ns.KeepWhoInUI()
     if page and page:IsShown() and C_FriendList and C_FriendList.SetWhoToUi then
         C_FriendList.SetWhoToUi(true)

@@ -562,6 +562,10 @@ local function BuildEntry(id, myActivities)
     end
     e.leader = e.leader or e.members[1]
     e.leaderName = info.leaderName or (e.leader and e.leader.name)
+    -- Remember where everyone the game does tell us about is (usually just the lister).
+    for _, p in ipairs(e.members) do
+        if p.areaName and p.areaName ~= "" and ns.RememberLocation then ns.RememberLocation(p.name, p.areaName, "listing") end
+    end
     e.numMembers = n
     e.isSolo = n <= 1
 
@@ -801,6 +805,131 @@ function ns.GetFiltered()
     table.sort(fg, SortEntries)
     table.sort(fp, SortEntries)
     return fg, fp, #groups, #players
+end
+
+---------------------------------------------------------------------------
+-- Where players are
+---------------------------------------------------------------------------
+-- The game shares only the lister's zone in search results, never the other members'. So Seeker
+-- remembers every zone it learns, from listings, your friends list, your guild roster and any /who
+-- (Seeker's Who tab, Whisper Messenger's lookups, or your own), for a while.
+local LOCATION_TTL = 15 * 60
+local locations = {}
+
+local function LocationKey(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    return (name:match("^[^-]+") or name):lower()
+end
+
+function ns.RememberLocation(name, zone, source)
+    local key = LocationKey(name)
+    if not key or type(zone) ~= "string" or zone == "" then return end
+    locations[key] = { zone = zone, time = GetTime(), source = source }
+end
+
+-- zone, seconds since it was learned, and where from; nil when unknown or too old.
+function ns.GetKnownLocation(name)
+    local l = locations[LocationKey(name) or ""]
+    if not l then return nil end
+    local age = GetTime() - l.time
+    if age > LOCATION_TTL then return nil end
+    return l.zone, age, l.source
+end
+
+-- Online friends and guildmates: the game tells you where they are.
+function ns.RefreshSocialLocations()
+    if C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetFriendInfoByIndex then
+        for i = 1, C_FriendList.GetNumFriends() or 0 do
+            local f = C_FriendList.GetFriendInfoByIndex(i)
+            if f and f.connected and f.area then ns.RememberLocation(f.name, f.area, "friend") end
+        end
+    end
+    if IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo then
+        for i = 1, GetNumGuildMembers() or 0 do
+            local name, _, _, _, _, zone, _, _, online = GetGuildRosterInfo(i)
+            if online and zone then ns.RememberLocation(name, zone, "guild") end
+        end
+    end
+end
+
+-- Every /who result, wherever it came from.
+function ns.RememberWhoResults()
+    if not (C_FriendList and C_FriendList.GetNumWhoResults and C_FriendList.GetWhoInfo) then return end
+    for i = 1, C_FriendList.GetNumWhoResults() or 0 do
+        local info = C_FriendList.GetWhoInfo(i)
+        if info then ns.RememberLocation(info.fullName, info.area, "who") end
+    end
+end
+
+-- Look up one member whose location isn't known, with a /who. The game allows one every few
+-- seconds, and only from a click, so each use finds one more. The answer comes back quietly
+-- (no window opens) and the tooltip updates.
+local WHO_GAP = 5
+local lastLookup = 0
+function ns.LocateMembers(members)
+    if not (C_FriendList and C_FriendList.SendWho) then return end
+    local missing = {}
+    for _, p in ipairs(members or {}) do
+        if p.name and not (p.areaName and p.areaName ~= "") and not ns.GetKnownLocation(p.name) then
+            missing[#missing + 1] = p.name
+        end
+    end
+    if #missing == 0 then
+        ns.Print("Everyone's location is already known.")
+        return
+    end
+    local wait = WHO_GAP - (GetTime() - lastLookup)
+    if wait > 0 then
+        ns.Print(("The game allows one lookup every few seconds; try again in %d."):format(math.ceil(wait)))
+        return
+    end
+    lastLookup = GetTime()
+    local short = missing[1]:match("^[^-]+") or missing[1]
+    ns.silentWhoUntil = GetTime() + 6
+    if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end
+    local ok = pcall(C_FriendList.SendWho, 'n-"' .. short .. '"')
+    if not ok then
+        ns.silentWhoUntil = nil
+        ns.Print("Couldn't look them up just now.")
+        return
+    end
+    ns.Print(("Looking up where %s is...%s"):format(short,
+        #missing > 1 and (" (%d more: use it again in a few seconds)"):format(#missing - 1) or ""))
+end
+
+-- A /who answer arrived. Remember it, and if it was one of Seeker's quiet lookups, send /who
+-- results back to chat (unless the Who tab is open) and refresh the tooltip on show.
+function ns.OnWhoListUpdate()
+    ns.RememberWhoResults()
+    if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then
+        ns.silentWhoUntil = nil
+        C_Timer.After(0.1, function()
+            if not (ns.IsWhoPageShown and ns.IsWhoPageShown()) and C_FriendList.SetWhoToUi then
+                C_FriendList.SetWhoToUi(false)
+            end
+            local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
+            if owner and owner.item and ns.ShowEntryTooltip then ns.ShowEntryTooltip(owner, owner.item) end
+        end)
+    end
+end
+
+do
+    local ev = CreateFrame("Frame")
+    for _, e in ipairs({ "WHO_LIST_UPDATE", "FRIENDLIST_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD" }) do
+        pcall(ev.RegisterEvent, ev, e)
+    end
+    local pending = false
+    ev:SetScript("OnEvent", function(_, event)
+        if event == "WHO_LIST_UPDATE" then
+            ns.OnWhoListUpdate()
+        elseif not pending then
+            pending = true
+            C_Timer.After(1, function()
+                pending = false
+                pcall(ns.RefreshSocialLocations)
+            end)
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
