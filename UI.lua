@@ -1578,13 +1578,21 @@ local function BuildFrame()
     end)
     AddGrip(f)
 
-    -- The addon's name and version, quietly in the title bar's right-hand side (every tab). On a
-    -- layer of its own above the frame's border art, which is drawn over the frame's own text.
-    local brandLayer = CreateFrame("Frame", nil, f)
-    brandLayer:SetAllPoints()
-    brandLayer:SetFrameLevel(f:GetFrameLevel() + 30)
-    local brand = Text(brandLayer, "GameFontDisableSmall")
-    brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -32, -6)
+    -- The addon's name and version, quietly in the title bar's right-hand side (every tab). In the
+    -- template's own title container, where the window title is (so it's drawn above the border).
+    local brandParent = f.TitleContainer
+    if not brandParent then
+        brandParent = CreateFrame("Frame", nil, f)
+        brandParent:SetAllPoints()
+        brandParent:SetFrameLevel(f:GetFrameLevel() + 30)
+    end
+    local brand = brandParent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    brand:SetTextColor(0.62, 0.62, 0.62)
+    if f.TitleContainer then
+        brand:SetPoint("RIGHT", f.TitleContainer, "RIGHT", -26, 0)
+    else
+        brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -32, -6)
+    end
     brand:SetJustifyH("RIGHT")
     brand:SetText("Seeker LFG" .. (ns.VERSION and ("  v" .. ns.VERSION) or ""))
     f:Hide()
