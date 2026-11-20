@@ -654,24 +654,33 @@ local function ListingTitle(e)
     if type(n) == "string" and n ~= "" then return n end
 end
 
-local LEVEL_X = 236     -- the XP-coloured level, between the text and the right-hand column
-local TEXT_W = LEVEL_X - 30
-
-local function BuildTextLines(row)
-    row.name:SetWidth(TEXT_W)
-    row.sub:SetWidth(TEXT_W)
+-- The text runs from the icon right up to the buttons on the right. The XP-coloured level sits just
+-- after the name, as the game's entries put "Lvl 37" after the name.
+local function BuildTextLines(row, rightEdge)
     row.line3 = Text(row, "GameFontDisableLeft")
     row.line3:SetPoint("TOPLEFT", row.sub, "BOTTOMLEFT", 0, -2)
-    row.line3:SetWidth(TEXT_W)
     row.line3:SetJustifyH("LEFT")
     row.line3:SetWordWrap(false)
-    row.level:SetPoint("LEFT", LEVEL_X, 0)
-    row.level:SetWidth(36)
+    -- Lines 2 and 3 end where the buttons begin.
+    row.sub:SetPoint("RIGHT", rightEdge, "LEFT", -6, 0)
+    row.line3:SetPoint("RIGHT", rightEdge, "LEFT", -6, 0)
+    row.level:ClearAllPoints()
+    row.level:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
+    row.level:SetJustifyH("LEFT")
+end
+
+-- The name at its natural width, but never pushing the level into the party icons on the right.
+local function SetRowName(row, text, roomRight)
+    row.name:SetWidth(0)
+    row.name:SetText(text)
+    local w = row:GetWidth() or 0
+    if w < 200 then w = 435 end -- before the first layout, a row's width isn't known yet
+    local maxName = math.max(80, w - 28 - roomRight - 44)
+    if row.name:GetStringWidth() > maxName then row.name:SetWidth(maxName) end
 end
 
 -- Groups: party seats top-right, Request to join and whisper below them.
 local function BuildGroupRow(row)
-    BuildTextLines(row)
     if HasAtlas("groupfinder-icon-leader") then row.icon:SetAtlas("groupfinder-icon-leader") end
     row.slots = {}
     for i = 5, 1, -1 do
@@ -696,11 +705,12 @@ local function BuildGroupRow(row)
     row.whisper = IconButton(row, "Interface\\GossipFrame\\GossipGossipIcon", 18, "Whisper the leader",
         function() if row.item then ns.Whisper(row.item.leaderName) end end)
     row.whisper:SetPoint("RIGHT", row.join, "LEFT", -6, 0)
+    BuildTextLines(row, row.whisper)
 end
 
 local function PopulateGroup(row, e)
     local leader = e.leader or {}
-    row.name:SetText(ShortName(e.leaderName) or "?")
+    SetRowName(row, ShortName(e.leaderName) or "?", 5 * (SLOT + 1) + 8)
     row.name:SetTextColor(ClassColor(leader.classFilename))
     local where = WhereText(e)
     row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
@@ -744,7 +754,6 @@ end
 
 -- Players: the roles they'll play top-right, Invite and whisper below them.
 local function BuildPlayerRow(row)
-    BuildTextLines(row)
     row.roleSlots = {}
     for i = 1, 3 do
         local s = Slot(row)
@@ -764,11 +773,12 @@ local function BuildPlayerRow(row)
     row.whisper = IconButton(row, "Interface\\GossipFrame\\GossipGossipIcon", 18, "Whisper",
         function() if row.item then ns.Whisper(row.item.leaderName) end end)
     row.whisper:SetPoint("RIGHT", row.invite, "LEFT", -6, 0)
+    BuildTextLines(row, row.whisper)
 end
 
 local function PopulatePlayer(row, e)
     local p = e.leader or {}
-    row.name:SetText(ShortName(p.name or e.leaderName) or "?")
+    SetRowName(row, ShortName(p.name or e.leaderName) or "?", 3 * (SLOT + 1) + 8)
     row.name:SetTextColor(ClassColor(p.classFilename))
     -- The game's class icon before a solo player's name.
     local classAtlas = p.classFilename and ("groupfinder-icon-class-" .. p.classFilename:lower())
