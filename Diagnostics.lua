@@ -44,7 +44,7 @@ local FUNCTIONS = {
 local TEMPLATES = {
     { "Frame", "ButtonFrameTemplate" }, { "Frame", "InsetFrameTemplate" },
     { "DropdownButton", "WowStyle1DropdownTemplate" }, { "Frame", "LargeSideTabButtonTemplate" },
-    { "Button", "LFGEyeBigTemplate" }, { "EditBox", "SearchBoxTemplate" }, { "EditBox", "InputBoxTemplate" },
+    { "Button", "LFGEyeBigTemplate" }, { "Frame", "LFGEyeTemplate" }, { "EditBox", "SearchBoxTemplate" }, { "EditBox", "InputBoxTemplate" },
     { "CheckButton", "UICheckButtonTemplate" }, { "Button", "UIPanelButtonTemplate" },
 }
 

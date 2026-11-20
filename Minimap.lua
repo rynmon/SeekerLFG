@@ -35,7 +35,20 @@ end
 -- Shared by the minimap button and the addon compartment.
 function ns.FillTooltip(tip, isMinimap)
     tip:SetText("Seeker LFG", 1, 1, 1)
-    tip:AddLine("Groups and players side by side, filtered so you keep your XP.", 0.8, 0.8, 0.8, true)
+    -- Listed: what for (as the game's minimap eye tooltip shows). Otherwise, what Seeker is.
+    local entry = ns.HasListing() and ns.GetListing()
+    if entry and entry.activityIDs and #entry.activityIDs > 0 then
+        tip:AddLine((LFG_LIST_MY_ACTIVITY_LIST_HEADER or "You're listed for:"), 0.1, 1, 0.1)
+        for i, id in ipairs(entry.activityIDs) do
+            if i > 8 then
+                tip:AddLine(("    and %d more"):format(#entry.activityIDs - 8), 0.8, 0.8, 0.8)
+                break
+            end
+            tip:AddLine("    " .. ns.GetActivityName(id), 1, 1, 1)
+        end
+    else
+        tip:AddLine("Groups and players side by side, filtered so you keep your XP.", 0.8, 0.8, 0.8, true)
+    end
     tip:AddLine(" ")
     tip:AddLine("|cffffd100Click|r to open or close", 1, 1, 1)
     if isMinimap then
@@ -72,15 +85,31 @@ function ns.SetupMinimapButton()
     background:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
     background:SetPoint("CENTER")
 
-    local icon = b:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(20, 20)
-    icon:SetTexture("Interface\\LFGFrame\\UI-LFG-PORTRAIT")
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    icon:SetPoint("CENTER")
-    local mask = b:CreateMaskTexture()
-    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(icon)
-    icon:AddMaskTexture(mask)
+    -- The game's own minimap LFG eye (LFGEyeTemplate, as its group finder's minimap button uses):
+    -- still, then watching while you're listed. Falls back to its still art, then the portrait.
+    local eye = ns.UI and ns.UI.TryCreate("Frame", nil, b, "LFGEyeTemplate")
+    if eye and eye.SetStaticMode then
+        eye:SetSize(24, 24)
+        eye:SetPoint("CENTER", 0, 0)
+        eye:SetFrameLevel(b:GetFrameLevel() + 1)
+        eye:SetStaticMode(true)
+        eye:Show()
+        b.eye = eye
+    else
+        local icon = b:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(22, 22)
+        icon:SetPoint("CENTER")
+        if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("groupfinder-eye-single") then
+            icon:SetAtlas("groupfinder-eye-single")
+        else
+            icon:SetTexture("Interface\\LFGFrame\\UI-LFG-PORTRAIT")
+            icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            local mask = b:CreateMaskTexture()
+            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetAllPoints(icon)
+            icon:AddMaskTexture(mask)
+        end
+    end
 
     local border = b:CreateTexture(nil, "OVERLAY")
     border:SetSize(50, 50)
@@ -114,9 +143,29 @@ function ns.SetupMinimapButton()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
 
+    -- Watching while you're listed, as the game's minimap eye does.
+    b:RegisterEvent("LFG_LIST_ACTIVE_ENTRY_UPDATE")
+    b:RegisterEvent("PLAYER_ENTERING_WORLD")
+    b:SetScript("OnEvent", function() ns.UpdateMinimapEye() end)
+
     button = b
     UpdatePosition()
     ns.UpdateMinimapButton()
+    ns.UpdateMinimapEye()
+end
+
+function ns.UpdateMinimapEye()
+    local eye = button and button.eye
+    if not eye then return end
+    local listed = ns.HasListing()
+    if button.eyeListed == listed then return end
+    button.eyeListed = listed
+    pcall(eye.SetStaticMode, eye, not listed)
+    if listed then
+        pcall(eye.StartInitialAnimation, eye)
+    else
+        pcall(eye.StopAnimating, eye)
+    end
 end
 
 -- Addon compartment (the minimap's addon list) hover

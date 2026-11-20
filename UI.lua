@@ -1864,6 +1864,15 @@ function ns.ShowOptionsMenu(owner)
     if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Seeker LFG")
+        -- While you're listed: edit or delist, as the game's minimap eye offers.
+        if ns.HasListing() then
+            local canEdit = ns.CanEditListing()
+            local edit = root:CreateButton(LFG_LIST_EDIT or "Edit listing", function() ns.Show("listing") end)
+            edit:SetEnabled(canEdit)
+            local unlist = root:CreateButton(LFG_LIST_UNLIST or "Delist", function() ns.RemoveListing() end)
+            unlist:SetEnabled(canEdit)
+            root:CreateDivider()
+        end
         -- The game's own option (a CVar shared with its window).
         root:CreateCheckbox(LFG_LIST_IGNORE_SUGGESTED_LEVEL or "Show all level ranges",
             function() return ns.IgnoringLevelRanges() end,
