@@ -7,6 +7,16 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.4",
+		date = "20 November 2026",
+		sections = {
+			{ "Fixed", {
+				{ "Cards past the window's edge.", "Opening the filters could leave the lists drawing cards below the bottom of the window. They now recount what fits every time they redraw, and never draw outside the window." },
+				{ "Picking one dungeon.", "The bottom line no longer raises an error when a single dungeon is picked in the activity menu." },
+			} },
+		},
+	},
+	{
 		version = "0.9.3",
 		date = "20 November 2026",
 		sections = {

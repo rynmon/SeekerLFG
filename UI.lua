@@ -443,6 +443,8 @@ end
 local function CreatePane(parent, spec)
     local f = CreateFrame("Frame", nil, parent)
     f.offset = 0
+    -- Nothing in a list ever draws outside it (the window's edge, the filter panel).
+    if f.SetClipsChildren then f:SetClipsChildren(true) end
 
     f.header = HeaderBar(f)
     f.header:SetPoint("TOPLEFT")
@@ -597,7 +599,9 @@ local function CreatePane(parent, spec)
     end
 
     function f:Refresh()
-        if not self.numRows then self:Layout() end
+        -- Count the cards that fit on every redraw: the lists change height when the filter
+        -- panel opens or closes, and a stale count drew cards past the window's bottom.
+        self:Layout()
         local data = self.data or {}
         local n = self.numRows
         local maxOff = max(0, #data - n)
@@ -1797,6 +1801,11 @@ local function BuildFrame()
         lists:SetPoint("TOPLEFT", 4, -(db.filtersOpen and LISTS_TOP_OPEN or LISTS_TOP_CLOSED))
         lists:SetPoint("BOTTOMRIGHT", -6, LISTS_BOTTOM)
         ns.UpdateFiltersButton()
+        -- The lists' new height is known on the next frame: redraw them then.
+        C_Timer.After(0, function()
+            if f.groups then f.groups:Refresh() end
+            if f.players then f.players:Refresh() end
+        end)
     end
     -- Players usually outnumber groups and carry more text (dungeon, zone, roles): 45/55.
     local panesW = FRAME_W - 10 - 2 * EDGE - GAP
