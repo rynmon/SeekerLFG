@@ -94,6 +94,14 @@ function ns.SetupMinimapButton()
         eye:SetSize(45, 45)
         eye:SetScale(20 / 45)
         eye:SetPoint("CENTER", 0, 0)
+        -- The template has its own mouse scripts, which made the eye catch clicks meant for the
+        -- button underneath. It's only a picture here: let every click and hover through.
+        eye:EnableMouse(false)
+        if eye.SetMouseClickEnabled then eye:SetMouseClickEnabled(false) end
+        if eye.SetMouseMotionEnabled then eye:SetMouseMotionEnabled(false) end
+        for _, child in ipairs({ eye:GetChildren() }) do
+            if child.EnableMouse then child:EnableMouse(false) end
+        end
         eye:SetFrameLevel(b:GetFrameLevel() + 1)
         eye:SetStaticMode(true)
         eye:Show()
