@@ -701,16 +701,16 @@ function ns.RefreshListingPage(filtersChanged)
         for _, id in ipairs(LFG.GetAvailableCategories and LFG.GetAvailableCategories() or {}) do
             if #ns.GetFilteredActivities(id) > 0 then cats[#cats + 1] = id end
         end
-        -- The buttons share the column's height (as tall as the game's, at most), so the page is full.
+        -- The game's buttons at their own size, stacked and centred in the column below the title.
         local n = math.max(1, #cats)
-        local avail = (catView:GetHeight() or 400) - 64
-        local h = math.max(56, math.min(84, math.floor((avail - (n - 1) * 10) / n)))
-        local w = math.max(300, (catView:GetWidth() or 460) - 44)
+        local gap = 10
+        local stack = n * catView.buttonH + (n - 1) * gap
+        local area = (catView:GetHeight() or 400) - 56
+        local top = -56 - math.max(0, math.floor((area - stack) / 2))
         for i, id in ipairs(cats) do
             local b = catView.buttons[i] or catView.MakeButton(i)
-            b:SetSize(w, h)
             b:ClearAllPoints()
-            b:SetPoint("TOP", 0, -52 - (i - 1) * (h + 10))
+            b:SetPoint("TOP", 0, top - (i - 1) * (catView.buttonH + gap))
             b.categoryID = id
             b.text:SetText(ns.GetCategoryName(id) or "?")
             -- What's in it for you: how many activities at your level, or that it's free-form.
@@ -813,21 +813,32 @@ function ns.BuildListingPage(f, p)
     catTitle:SetPoint("TOP", 0, -18)
     catTitle:SetText("What are you looking for?")
     catView.buttons = {}
+    -- Built as the game's LFGListingCategoryTemplate: the button is the frame art's own size
+    -- (groupfinder-button-cover), with the category's picture inset 5,-8,-5,5 inside it, and the
+    -- game's pressed and hover art. Never stretched: the art only lines up at its own size.
+    local COVER = "groupfinder-button-cover"
+    local coverInfo = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(COVER)
+    catView.buttonW = coverInfo and coverInfo.width or 330
+    catView.buttonH = coverInfo and coverInfo.height or 64
     function catView.MakeButton(i)
         local b = CreateFrame("Button", nil, catView)
-        b:SetSize(330, 56)
-        b:SetPoint("TOP", 0, -48 - (i - 1) * 62)
+        b:SetSize(catView.buttonW, catView.buttonH)
         b.art = b:CreateTexture(nil, "BACKGROUND")
-        b.art:SetAllPoints()
+        b.art:SetPoint("TOPLEFT", 5, -8)
+        b.art:SetPoint("BOTTOMRIGHT", -5, 5)
         local cover = b:CreateTexture(nil, "ARTWORK")
         cover:SetAllPoints()
-        if U.HasAtlas("groupfinder-button-cover") then cover:SetAtlas("groupfinder-button-cover") else cover:Hide() end
+        if U.HasAtlas(COVER) then cover:SetAtlas(COVER) else cover:Hide() end
+        if U.HasAtlas("groupfinder-button-cover-down") then
+            b:SetPushedTexture("Interface\\Buttons\\WHITE8X8")
+            b:GetPushedTexture():SetAtlas("groupfinder-button-cover-down")
+        end
         local hover = b:CreateTexture(nil, "HIGHLIGHT")
         hover:SetAllPoints()
         if U.HasAtlas("groupfinder-button-cover-hover") then hover:SetAtlas("groupfinder-button-cover-hover")
         else hover:SetColorTexture(1, 1, 1, 0.1) end
         b.text = U.Text(b, "GameFontNormalLarge")
-        b.text:SetPoint("LEFT", 20, 8)
+        b.text:SetPoint("LEFT", 20, 7)
         b.sub = U.Text(b, "GameFontHighlightSmall")
         b.sub:SetPoint("TOPLEFT", b.text, "BOTTOMLEFT", 0, -4)
         b.sub:SetTextColor(0.85, 0.85, 0.85)
