@@ -1189,7 +1189,8 @@ function ns.StatusText(numGroups, numPlayers)
     local me = UnitLevel("player") or 0
     local selList = ns.SelectedActivities()
     local sel = selList and #selList == 1 and selList[1]
-    local lo, hi = sel and ns.GetActivityRange(sel)
+    local lo, hi
+    if sel then lo, hi = ns.GetActivityRange(sel) end -- both values ("sel and f()" would keep only the first)
     if lo then
         local note
         if me > hi + ns.XP_GAP then note = "|cffff4d4dno XP for you here|r"

@@ -9,3 +9,5 @@
 /.gitattributes export-ignore
 /Changelog.lua export-ignore
 /TESTING.md export-ignore
+/assets/** export-ignore
+/DEVELOPMENT.md export-ignore
