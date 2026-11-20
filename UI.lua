@@ -1179,6 +1179,8 @@ function ns.StatusText(numGroups, numPlayers)
         parts[#parts + 1] = SEARCHING or "Searching..."
     elseif ns.lastResults then
         parts[#parts + 1] = ("Searched %s ago"):format(FormatAge(GetTime() - ns.lastResults))
+    elseif numGroups + numPlayers > 0 then
+        parts[#parts + 1] = "Earlier results" -- from a search made before Seeker was watching
     else
         parts[#parts + 1] = "Not searched yet"
     end
@@ -1576,9 +1578,13 @@ local function BuildFrame()
     end)
     AddGrip(f)
 
-    -- The addon's name and version, quietly in the title bar's right-hand side (every tab).
-    local brand = Text(f, "GameFontDisableSmall")
-    brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -30, -6)
+    -- The addon's name and version, quietly in the title bar's right-hand side (every tab). On a
+    -- layer of its own above the frame's border art, which is drawn over the frame's own text.
+    local brandLayer = CreateFrame("Frame", nil, f)
+    brandLayer:SetAllPoints()
+    brandLayer:SetFrameLevel(f:GetFrameLevel() + 30)
+    local brand = Text(brandLayer, "GameFontDisableSmall")
+    brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -32, -6)
     brand:SetJustifyH("RIGHT")
     brand:SetText("Seeker LFG" .. (ns.VERSION and ("  v" .. ns.VERSION) or ""))
     f:Hide()
