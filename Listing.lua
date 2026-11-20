@@ -18,6 +18,7 @@ ns.Listing = L
 
 local LFG = C_LFGList or {}
 local XPFor -- defined with the listing warnings
+local BuildPreview, UpdatePreview -- the listing preview card
 local ROW_H = 22 -- the game's own activity row spacing
 
 -- A native font object with its own colour (a reused row may have been coloured before).
@@ -548,6 +549,111 @@ local function ReturnComment()
 end
 
 ---------------------------------------------------------------------------
+-- Preview: your listing as the Browse list shows it
+---------------------------------------------------------------------------
+local previewCard
+BuildPreview = function(parent)
+    local c = CreateFrame("Frame", nil, parent)
+    c:SetHeight(64)
+    local card = c:CreateTexture(nil, "BACKGROUND")
+    card:SetPoint("TOPLEFT", 3, -2)
+    card:SetPoint("BOTTOMRIGHT", -3, 0)
+    if U.HasAtlas("common-button-list-mid2") then card:SetAtlas("common-button-list-mid2") else card:SetColorTexture(1, 1, 1, 0.05) end
+    c.icon = c:CreateTexture(nil, "ARTWORK")
+    c.icon:SetPoint("TOPLEFT", 10, -11)
+    c.icon:SetSize(16, 16)
+    c.name = U.Text(c, "GameFontNormalLarge")
+    c.name:SetPoint("TOPLEFT", 28, -11)
+    c.name:SetJustifyH("LEFT")
+    c.sub = U.Text(c, "GameFontDisableLeft")
+    c.sub:SetPoint("TOPLEFT", c.name, "BOTTOMLEFT", 0, -3)
+    c.sub:SetPoint("RIGHT", c, "RIGHT", -96, 0)
+    c.sub:SetJustifyH("LEFT")
+    c.sub:SetWordWrap(false)
+    c.line3 = U.Text(c, "GameFontDisableLeft")
+    c.line3:SetPoint("TOPLEFT", c.sub, "BOTTOMLEFT", 0, -2)
+    c.line3:SetJustifyH("LEFT")
+    c.level = U.Text(c, "GameFontNormalLarge")
+    c.level:SetPoint("RIGHT", c, "RIGHT", -84, 0)
+    c.roles = {}
+    for i = 1, 3 do
+        local t = c:CreateTexture(nil, "ARTWORK")
+        t:SetSize(22, 22)
+        t:SetPoint("TOPRIGHT", c, "TOPRIGHT", -8 - (3 - i) * 23, -8)
+        c.roles[i] = t
+    end
+    c.group = U.Text(c, "GameFontHighlightSmall")
+    c.group:SetPoint("TOPRIGHT", -10, -12)
+    previewCard = c
+    return c
+end
+
+UpdatePreview = function()
+    local c = previewCard
+    if not c then return end
+    local _, classFile = UnitClass("player")
+    local atlas = classFile and ("groupfinder-icon-class-" .. classFile:lower())
+    if atlas and U.HasAtlas(atlas) then
+        c.icon:SetAtlas(atlas)
+        c.icon:Show()
+    elseif classFile then
+        U.SetClassIcon(c.icon, classFile)
+        c.icon:Show()
+    else
+        c.icon:Hide()
+    end
+    c.name:SetText(UnitName("player") or "?")
+    c.name:SetTextColor(U.ClassColor(classFile))
+    c.level:SetText(tostring(UnitLevel("player") or ""))
+
+    -- What you're listed for, and where you are (as Browse shows a player's zone).
+    local ids = SelectedList()
+    table.sort(ids, function(x, y) return (ns.GetActivityRange(x) or 0) < (ns.GetActivityRange(y) or 0) end)
+    local what
+    if #ids > 0 then
+        what = ns.GetActivityName(ids[1]) .. (#ids > 1 and ("|cff999999 +%d|r"):format(#ids - 1) or "")
+    elseif L.categoryID then
+        what = "|cff808080Pick what you're listing for|r"
+    else
+        what = "|cff808080Pick a category|r"
+    end
+    local zone = GetRealZoneText and GetRealZoneText() or ""
+    c.sub:SetText(what .. (zone ~= "" and ("  |cffd0d0d0" .. zone .. "|r") or ""))
+
+    local extras = {}
+    if L.playstyle and HasPlaystyles() then extras[#extras + 1] = "|cff19ff19" .. GetGeneralPlaystyleString(L.playstyle) .. "|r" end
+    if L.newPlayerFriendly then
+        extras[#extras + 1] = U.HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a" or "|cff80ff80New|r"
+    end
+    if HasVoiceModes() and L.voiceMode == Enum.LFGEntryVoiceMode.Discord then
+        extras[#extras + 1] = "|cff8c9eff" .. (VOICE_CHAT_MODE_DISCORD or "Discord") .. "|r"
+    end
+    c.line3:SetText(table.concat(extras, "  "))
+
+    -- Solo: the roles you'll play, right-aligned. In a group: its size.
+    local inGroup = IsInGroup(LE_PARTY_CATEGORY_HOME)
+    c.group:SetShown(inGroup)
+    if inGroup then
+        c.group:SetText(("Group of %d"):format(GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)))
+        for i = 1, 3 do c.roles[i]:Hide() end
+    else
+        local shown = {}
+        for _, key in ipairs(U.ROLE_KEYS) do
+            if L.roles[key] then shown[#shown + 1] = key end
+        end
+        for i = 1, 3 do
+            local key = shown[i - (3 - #shown)]
+            if key then
+                U.ApplyRole(c.roles[i], key)
+                c.roles[i]:Show()
+            else
+                c.roles[i]:Hide()
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Refresh
 ---------------------------------------------------------------------------
 function ns.RefreshListingPage(filtersChanged)
@@ -595,10 +701,31 @@ function ns.RefreshListingPage(filtersChanged)
         for _, id in ipairs(LFG.GetAvailableCategories and LFG.GetAvailableCategories() or {}) do
             if #ns.GetFilteredActivities(id) > 0 then cats[#cats + 1] = id end
         end
+        -- The buttons share the column's height (as tall as the game's, at most), so the page is full.
+        local n = math.max(1, #cats)
+        local avail = (catView:GetHeight() or 400) - 64
+        local h = math.max(56, math.min(84, math.floor((avail - (n - 1) * 10) / n)))
+        local w = math.max(300, (catView:GetWidth() or 460) - 44)
         for i, id in ipairs(cats) do
             local b = catView.buttons[i] or catView.MakeButton(i)
+            b:SetSize(w, h)
+            b:ClearAllPoints()
+            b:SetPoint("TOP", 0, -52 - (i - 1) * (h + 10))
             b.categoryID = id
             b.text:SetText(ns.GetCategoryName(id) or "?")
+            -- What's in it for you: how many activities at your level, or that it's free-form.
+            local info = ns.GetCategoryInfo(id)
+            if info and info.autoChooseActivity then
+                b.sub:SetText("Anything else: you describe it")
+            else
+                local acts = ns.GetFilteredActivities(id)
+                local full = 0
+                for _, aid in ipairs(acts) do
+                    if ns.ActivityXPClass(aid) == "full" then full = full + 1 end
+                end
+                b.sub:SetText(("%d at your level%s"):format(#acts,
+                    full > 0 and ("  |cff55ff55%d with full XP|r"):format(full) or ""))
+            end
             local atlas = CATEGORY_ATLAS[id] or "groupfinder-button-questing"
             if U.HasAtlas(atlas) then b.art:SetAtlas(atlas) b.art:Show() else b.art:Hide() end
             b:Show()
@@ -627,6 +754,7 @@ function ns.RefreshListingPage(filtersChanged)
         details.rolePoll:SetEnabled(UnitIsGroupLeader("player") or UnitIsGroupAssistant("player"))
     end
     U.UpdateToggles()
+    UpdatePreview()
     details.npf:SetChecked(L.newPlayerFriendly and true or false)
     details.npf:SetEnabled(canEdit)
 
@@ -699,7 +827,10 @@ function ns.BuildListingPage(f, p)
         if U.HasAtlas("groupfinder-button-cover-hover") then hover:SetAtlas("groupfinder-button-cover-hover")
         else hover:SetColorTexture(1, 1, 1, 0.1) end
         b.text = U.Text(b, "GameFontNormalLarge")
-        b.text:SetPoint("LEFT", 20, 0)
+        b.text:SetPoint("LEFT", 20, 8)
+        b.sub = U.Text(b, "GameFontHighlightSmall")
+        b.sub:SetPoint("TOPLEFT", b.text, "BOTTOMLEFT", 0, -4)
+        b.sub:SetTextColor(0.85, 0.85, 0.85)
         b:SetScript("OnClick", function(self)
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
             L.SetCategory(self.categoryID)
@@ -836,7 +967,7 @@ function ns.BuildListingPage(f, p)
     details.commentHolder = CreateFrame("Frame", nil, details)
     details.commentHolder:SetPoint("TOPLEFT", DX, -126)
     details.commentHolder:SetPoint("TOPRIGHT", -DX, -126)
-    details.commentHolder:SetHeight(110)
+    details.commentHolder:SetHeight(92)
     details.commentMissing = U.Text(details.commentHolder, "GameFontDisable", U.SIZE_LABEL)
     details.commentMissing:SetPoint("TOPLEFT", 4, -8)
     details.commentMissing:SetPoint("RIGHT", -4, 0)
@@ -844,9 +975,9 @@ function ns.BuildListingPage(f, p)
     details.commentMissing:SetText("The game's description box isn't loaded yet. Open the game's Looking for Group window once (hold Shift when opening it), then come back. You can list without a description meanwhile.")
 
     -- Roles: your own (solo), or your role in the group plus a role check (leader / assist).
-    Label(LFG_LIST_YOUR_ROLES or "Your roles", -262)
+    Label(LFG_LIST_YOUR_ROLES or "Your roles", -238)
     details.soloRoles = CreateFrame("Frame", nil, details)
-    details.soloRoles:SetPoint("TOPLEFT", DX + LBL_W, -252)
+    details.soloRoles:SetPoint("TOPLEFT", DX + LBL_W, -228)
     details.soloRoles:SetSize(330, 34)
     local prev
     for _, key in ipairs(U.ROLE_KEYS) do
@@ -861,7 +992,7 @@ function ns.BuildListingPage(f, p)
     end
 
     details.groupRoles = CreateFrame("Frame", nil, details)
-    details.groupRoles:SetPoint("TOPLEFT", DX + LBL_W, -252)
+    details.groupRoles:SetPoint("TOPLEFT", DX + LBL_W, -228)
     details.groupRoles:SetSize(330, 34)
     details.roleDD = U.Dropdown(details.groupRoles, 140, function(root)
         local function IsRole(v) return UnitGroupRolesAssigned("player") == v end
@@ -892,14 +1023,20 @@ function ns.BuildListingPage(f, p)
         SetCVar("lfgNewPlayerFriendly", v and "1" or "0")
         SetDirty(true)
     end, LFG_LIST_NEW_PLAYER_FRIENDLY or "New player friendly", "Mark your listing as welcoming to new players.")
-    details.npf:SetPoint("TOPLEFT", DX - 4, -304)
+    details.npf:SetPoint("TOPLEFT", DX - 4, -270)
 
-    local note = U.Text(details, "GameFontHighlightSmall")
-    note:SetPoint("TOPLEFT", DX, -350)
+    -- How other players will see your listing: the Browse list's own card, filled from this page.
+    local previewLabel = U.Text(details, "GameFontNormal")
+    previewLabel:SetPoint("TOPLEFT", DX, -312)
+    previewLabel:SetText("How others will see you")
+    details.preview = BuildPreview(details)
+    details.preview:SetPoint("TOPLEFT", DX - 3, -330)
+    details.preview:SetPoint("TOPRIGHT", -DX + 3, -330)
+    local note = U.Text(details, "GameFontDisableSmall")
+    note:SetPoint("TOPLEFT", details.preview, "BOTTOMLEFT", 3, -6)
     note:SetPoint("RIGHT", -DX, 0)
     note:SetJustifyH("LEFT")
-    note:SetTextColor(0.65, 0.65, 0.65)
-    note:SetText("Seeker lists you through the game's own group finder, exactly as its window does. Listings stay up while you play and show in the game's window too.")
+    note:SetText("Listed through the game's own group finder: it shows in the game's window too.")
 
     -- Bottom: error / status, then Back-or-Delist and List
     page.post = U.RedButton(page, LFG_POST_GROUP_SOLO or "List self", 150, 24)

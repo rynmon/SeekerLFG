@@ -16,6 +16,7 @@ ns.CHANGELOG = {
 				{ "Sort.", "Cog > Sort: best XP, newest, oldest, level either way, or biggest groups first." },
 				{ "A clearer activity list.", "The activity menu is now sorted into Full XP for you, Above your level, Some XP and No XP for you, lowest level first, with level ranges in their own column. One click picks every dungeon with full XP for you." },
 				{ "Warnings when listing.", "Dungeons you'd get no XP from are marked, and before you post you're told about those and any instance you're saved to." },
+				{ "A fuller List yourself page.", "The category buttons fill the column and say how many activities are at your level (and how many give you full XP), and a preview shows how your listing will look to other players as you fill it in." },
 				{ "Options page.", "Every setting is also in the game's Options > AddOns > Seeker LFG." },
 				{ "Self-test.", "/seeker selftest checks everything Seeker relies on in the game, for bug reports." },
 			} },
