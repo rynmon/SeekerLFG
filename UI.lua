@@ -18,7 +18,7 @@ local LISTS_TOP_OPEN = FILTER_TOP + FILTER_H + 4
 local LISTS_TOP_CLOSED = FILTER_TOP
 local LISTS_BOTTOM = 26
 local EDGE, GAP = 5, 8
-local HEADER_H, ROW_H = 36, 66   -- the game's category bar, and its three-line search entries
+local HEADER_H, ROW_H = 36, 56   -- the game's category bar, and three-line search entries
 local SCROLL_W = 6
 local SLOT = 22
 local MIN_SCALE, MAX_SCALE, SCALE_STEP = 0.5, 2, 0.05
@@ -520,18 +520,23 @@ local function CreatePane(parent, spec)
 
         -- Leader crown (groups) or class icon (players) before the name, as the game's entries.
         row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetPoint("TOPLEFT", 10, -11)
+        row.icon:SetPoint("TOPLEFT", 10, -7)
         row.icon:SetSize(16, 16)
 
         -- The game's entry fonts: name (GameFontNormalLarge) over the activity (GameFontDisableLeft).
         row.name = Text(row, "GameFontNormalLarge")
-        row.name:SetPoint("TOPLEFT", 28, -11)
+        row.name:SetPoint("TOPLEFT", 28, -7)
         row.name:SetJustifyH("LEFT")
         row.name:SetWordWrap(false)
         row.sub = Text(row, "GameFontDisableLeft")
-        row.sub:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -3)
+        row.sub:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -2)
         row.sub:SetJustifyH("LEFT")
         row.sub:SetWordWrap(false)
+
+        -- Bottom-right: group size and how long ago it was listed, while the buttons are hidden.
+        row.corner = Text(row, "GameFontDisableSmall")
+        row.corner:SetPoint("BOTTOMRIGHT", -10, 9)
+        row.corner:SetJustifyH("RIGHT")
 
         row.level = Text(row, "GameFontNormalLarge")
         row.level:SetJustifyH("CENTER")
@@ -543,6 +548,7 @@ local function CreatePane(parent, spec)
         function row:UpdateActions()
             local show = self.canAct and self:IsMouseOver()
             for _, b in ipairs(self.actions or {}) do b:SetShown(show) end
+            if self.corner then self.corner:SetShown(not show) end
         end
         for _, b in ipairs(row.actions or {}) do
             b:HookScript("OnLeave", function() row:UpdateActions() end)
@@ -694,7 +700,7 @@ local function SetRowName(row, text, roomRight)
     row.name:SetWidth(0)
     row.name:SetText(text)
     local w = row:GetWidth() or 0
-    if w < 200 then w = 435 end -- before the first layout, a row's width isn't known yet
+    if w < 200 then w = 390 end -- before the first layout, a row's width isn't known yet (the narrower pane)
     local maxName = math.max(80, w - 28 - roomRight - 44)
     if row.name:GetStringWidth() > maxName then row.name:SetWidth(maxName) end
 end
@@ -705,14 +711,14 @@ local function BuildGroupRow(row)
     row.slots = {}
     for i = 5, 1, -1 do
         local s = Slot(row)
-        s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (5 - i) * (SLOT + 1), -8)
+        s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (5 - i) * (SLOT + 1), -6)
         row.slots[i] = s
     end
     row.raid = Text(row, "GameFontHighlight")
-    row.raid:SetPoint("TOPRIGHT", -8, -11)
+    row.raid:SetPoint("TOPRIGHT", -8, -9)
 
     row.join = RedButton(row, "Request to join", 104, 20, true)
-    row.join:SetPoint("BOTTOMRIGHT", -8, 8)
+    row.join:SetPoint("BOTTOMRIGHT", -8, 6)
     row.join:SetScript("OnClick", function()
         if row.item then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
@@ -737,6 +743,11 @@ local function PopulateGroup(row, e)
     row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
     row.line3:SetText(ExtrasText(e))
     row.level:SetText(e.maxLevel and tostring(e.maxLevel) or "?")
+    if e.maxPlayers > 5 or e.numMembers > 5 then
+        row.corner:SetText(FormatAge(e.age)) -- the size is already in the role counts
+    else
+        row.corner:SetText(("%d/%d  ·  %s"):format(e.numMembers, e.maxPlayers, FormatAge(e.age)))
+    end
     row.canAct = not e.isSelf
     row:UpdateActions()
 
@@ -782,7 +793,7 @@ local function BuildPlayerRow(row)
     end
 
     row.invite = RedButton(row, INVITE or "Invite", 70, 20, true)
-    row.invite:SetPoint("BOTTOMRIGHT", -8, 8)
+    row.invite:SetPoint("BOTTOMRIGHT", -8, 6)
     row.invite:SetScript("OnClick", function()
         if row.item and ns.CanInvite(row.item) then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
@@ -817,6 +828,7 @@ local function PopulatePlayer(row, e)
     row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
     row.line3:SetText(ExtrasText(e))
     row.level:SetText(p.level and tostring(p.level) or "?")
+    row.corner:SetText(FormatAge(e.age))
     row.canAct = not e.isSelf
     row:UpdateActions()
     row.invite:SetEnabled(ns.CanInvite(e))
@@ -832,7 +844,7 @@ local function PopulatePlayer(row, e)
         local key = shown[i]
         if key then
             s:ClearAllPoints()
-            s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (#shown - i) * (SLOT + 1), -8)
+            s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (#shown - i) * (SLOT + 1), -6)
             SetSlot(s, key)
         else
             s:Hide()
@@ -1751,7 +1763,10 @@ local function BuildFrame()
         lists:SetPoint("BOTTOMRIGHT", -6, LISTS_BOTTOM)
         ns.UpdateFiltersButton()
     end
-    local paneW = floor((FRAME_W - 10 - 2 * EDGE - GAP) / 2)
+    -- Players usually outnumber groups and carry more text (dungeon, zone, roles): 45/55.
+    local panesW = FRAME_W - 10 - 2 * EDGE - GAP
+    local groupsW = floor(panesW * 0.45)
+    local playersW = panesW - groupsW
 
     f.groups = CreatePane(lists, {
         title = LFG_LIST_CATEGORY_GROUPS or "Groups",
@@ -1761,7 +1776,7 @@ local function BuildFrame()
     })
     f.groups:SetPoint("TOPLEFT", EDGE, -EDGE)
     f.groups:SetPoint("BOTTOMLEFT", EDGE, EDGE)
-    f.groups:SetWidth(paneW)
+    f.groups:SetWidth(groupsW)
 
     f.players = CreatePane(lists, {
         title = LFG_LIST_CATEGORY_SOLO_PLAYERS or "Players",
@@ -1771,7 +1786,7 @@ local function BuildFrame()
     })
     f.players:SetPoint("TOPRIGHT", -EDGE, -EDGE)
     f.players:SetPoint("BOTTOMRIGHT", -EDGE, EDGE)
-    f.players:SetWidth(paneW)
+    f.players:SetWidth(playersW)
 
     -- Bottom bar: status left, colour key right
     local legend = Text(browse, "GameFontHighlightSmall")
