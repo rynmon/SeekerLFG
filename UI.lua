@@ -676,7 +676,7 @@ local function BuildGroupRow(row)
     end)
     row.join:SetMotionScriptsWhileDisabled(true)
     Tooltip(row.join, "Request to join",
-        "Opens a whisper to the leader with a request ready to send: your level, class, roles and the dungeon. Press Enter to send it.\n\nForever's group finder has no applications; leaders invite you from a whisper.")
+        "Opens a whisper to the leader with your request ready to send. Press Enter to send it. Change the message in the cog menu > Messages.\n\nForever's group finder has no applications; leaders invite you from a whisper.")
     row.whisper = IconButton(row, "Interface\\GossipFrame\\GossipGossipIcon", 18, "Whisper the leader",
         function() if row.item then ns.Whisper(row.item.leaderName) end end)
     row.whisper:SetPoint("RIGHT", row.join, "LEFT", -6, 0)
@@ -740,11 +740,11 @@ local function BuildPlayerRow(row)
     row.invite:SetScript("OnClick", function()
         if row.item and ns.CanInvite(row.item) then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-            ns.Invite(row.item.leaderName)
+            ns.InviteListed(row.item)
         end
     end)
     row.invite:SetMotionScriptsWhileDisabled(true)
-    Tooltip(row.invite, INVITE or "Invite", "Invite them to your party. Only the leader or an assistant can invite while you're in a group.")
+    Tooltip(row.invite, INVITE or "Invite", "Invite them to your party, and whisper them your invite message if you've set one (cog menu > Messages). Only the leader or an assistant can invite while you're in a group.")
     row.whisper = IconButton(row, "Interface\\GossipFrame\\GossipGossipIcon", 18, "Whisper",
         function() if row.item then ns.Whisper(row.item.leaderName) end end)
     row.whisper:SetPoint("RIGHT", row.invite, "LEFT", -6, 0)
@@ -1018,7 +1018,7 @@ function ns.EntryMenu(owner, e)
         end
         root:CreateButton(SEND_MESSAGE or "Whisper", function() ns.Whisper(e.leaderName) end)
         if e.isSolo then
-            local invite = root:CreateButton(GROUP_INVITE or "Invite", function() ns.Invite(e.leaderName) end)
+            local invite = root:CreateButton(GROUP_INVITE or "Invite", function() ns.InviteListed(e) end)
             invite:SetEnabled(ns.CanInvite(e))
         else
             root:CreateButton("Request to join", function() ns.RequestToJoin(e) end)
@@ -1838,6 +1838,7 @@ function ns.ShowOptionsMenu(owner)
             function() ns.SetMinimapButton(ns.db.minimapButton == false) end)
         root:CreateDivider()
         root:CreateButton("Open the game's Looking for Group window", function() ns.OpenNative() end)
+        root:CreateButton("Messages...", function() ns.ShowMessages() end)
         root:CreateButton("Reset window position and size", function() SlashCmdList.SEEKERLFG("reset") end)
     end)
 end
@@ -1929,6 +1930,8 @@ SlashCmdList.SEEKERLFG = function(msg)
         ns.DebugDump()
     elseif msg == "minimap" then
         ns.SetMinimapButton(ns.db.minimapButton == false)
+    elseif msg == "messages" then
+        ns.ShowMessages()
     elseif msg == "replace" then
         ns.SetReplaceNative(not ns.db.replaceNative)
     elseif msg == "blizzard" then

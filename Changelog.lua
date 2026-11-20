@@ -7,6 +7,17 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.2",
+		date = "20 November 2026",
+		sections = {
+			{ "Your own messages", {
+				{ "Request to join, your way.", "Write your own Request to join message in the cog menu > Messages (or /seeker messages). It still opens ready to send in a whisper, so you press Enter." },
+				{ "A message with your invites.", "Set an invite message and it's whispered to players when you click Invite. Leave it empty for a plain invite." },
+				{ "Placeholders.", "[level], [class], [roles], [dungeon], [name] (you), [target] (them) and [zone] are filled in for each listing. Click one in the Messages window to add it, and a preview shows exactly what will be sent." },
+			} },
+		},
+	},
+	{
 		version = "0.9.1",
 		date = "20 November 2026",
 		sections = {

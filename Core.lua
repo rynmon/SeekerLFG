@@ -726,10 +726,25 @@ end
 
 -- Forever has no applications: you ask the leader. This opens a whisper with a request ready to
 -- send (your level, class, roles and the dungeon); you press Enter to send it.
-function ns.RequestToJoin(e)
-    if not e or not e.leaderName then return end
-    local level = UnitLevel("player")
-    local className = UnitClass("player")
+---------------------------------------------------------------------------
+-- Message templates (Request to join, and the optional whisper sent with an invite)
+---------------------------------------------------------------------------
+ns.DEFAULT_REQUEST_MESSAGE = "Hi! Could I join you for [dungeon]? I'm a level [level] [class] ([roles])."
+ns.DEFAULT_INVITE_MESSAGE = "" -- empty: inviting sends no whisper, as the game's Invite
+ns.MAX_WHISPER = 255
+
+-- The placeholders, in the order the Messages window lists them.
+ns.MESSAGE_TOKENS = {
+    { "level", "your level" },
+    { "class", "your class" },
+    { "roles", "the roles you've ticked, e.g. Tank/Healer" },
+    { "dungeon", "the dungeon they're listed for" },
+    { "name", "your name" },
+    { "target", "their name" },
+    { "zone", "the zone you're in" },
+}
+
+local function MyRoles()
     local roles = {}
     local r = C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles()
     if r then
@@ -737,11 +752,59 @@ function ns.RequestToJoin(e)
         if r.healer then roles[#roles + 1] = HEALER or "Healer" end
         if r.dps then roles[#roles + 1] = DAMAGER or "DPS" end
     end
-    local act = e.xpActivity or RelevantActivities(e)[1]
-    local what = act and ns.GetActivityName(act) or "your group"
-    local msg = ("Hi! Could I join you for %s? I'm a level %d %s%s."):format(what, level or 0, className or "",
-        #roles > 0 and (" (" .. table.concat(roles, "/") .. ")") or "")
-    ns.Whisper(e.leaderName, msg)
+    return table.concat(roles, "/")
+end
+
+-- Fills a template's [placeholders] (any case) for a listing, then tidies up whatever an empty
+-- placeholder leaves behind ("()", doubled spaces), and keeps it to one whisper.
+function ns.RenderMessage(template, e)
+    template = template or ""
+    local act = e and (e.xpActivity or RelevantActivities(e)[1])
+    local values = {
+        level = tostring(UnitLevel("player") or ""),
+        class = UnitClass("player") or "",
+        roles = MyRoles(),
+        dungeon = act and ns.GetActivityName(act) or "",
+        name = UnitName("player") or "",
+        target = e and ns.ShortName and ns.ShortName(e.leaderName) or (e and e.leaderName) or "",
+        zone = GetRealZoneText and GetRealZoneText() or "",
+    }
+    local text = template:gsub("%[(%a+)%]", function(key)
+        local v = values[key:lower()]
+        return v -- unknown [words] are left as typed
+    end)
+    text = text:gsub("%(%s*%)", ""):gsub("%[%s*%]", ""):gsub("  +", " "):gsub("%s+([%.,!?])", "%1")
+    text = strtrim(text)
+    if #text > ns.MAX_WHISPER then text = text:sub(1, ns.MAX_WHISPER) end
+    return text
+end
+
+function ns.RequestMessage()
+    local t = ns.db.requestMessage
+    if t == nil or strtrim(t) == "" then return ns.DEFAULT_REQUEST_MESSAGE end
+    return t
+end
+
+function ns.InviteMessage()
+    return ns.db.inviteMessage or ns.DEFAULT_INVITE_MESSAGE
+end
+
+-- Request to join: a whisper to the leader with your message ready; you press Enter to send it.
+function ns.RequestToJoin(e)
+    if not e or not e.leaderName then return end
+    ns.Whisper(e.leaderName, ns.RenderMessage(ns.RequestMessage(), e))
+end
+
+-- Invite a listed player, and whisper them your invite message if you've set one. The click is
+-- what sends it, as the invite itself.
+function ns.InviteListed(e)
+    if not e or not e.leaderName then return end
+    ns.Invite(e.leaderName)
+    local msg = ns.RenderMessage(ns.InviteMessage(), e)
+    if msg ~= "" and SendChatMessage then
+        local ok, err = pcall(SendChatMessage, msg, "WHISPER", nil, e.leaderName)
+        if not ok then ns.Print("Couldn't send your invite message: " .. tostring(err)) end
+    end
 end
 
 function ns.ReportListing(e, advertisement)

@@ -27,9 +27,27 @@ The window has the same three tabs as Forever's group finder:
 - **Browse:** groups and solo players side by side. Your listing appears at the top, and listings that match it show in blue. Right-click a listing to whisper, invite or report it.
 - **Who:** a /who search with class, race, zone and sort filters, and an invite button for each player.
 
-Forever has no "apply to group". **Request to join** opens a whisper to the leader with your level, class, roles and the dungeon already written; press Enter to send it. If **Whisper Messenger** is installed, whispers open there instead.
+Forever has no "apply to group". **Request to join** opens a whisper to the leader with your request already written; press Enter to send it. If **Whisper Messenger** is installed, whispers open there instead.
 
 Other filters: level range, group needs a tank / healer / DPS, player can tank / heal / DPS, player class, hide full groups.
+
+## Your own messages
+
+In the cog menu, **Messages** (or `/seeker messages`) lets you write your own **Request to join** message, and an **Invite** message that's whispered to players when you invite them. Leave the invite message empty for a plain invite.
+
+You can use these placeholders, which are filled in for each listing:
+
+| Placeholder | Becomes |
+|---|---|
+| `[level]` | your level |
+| `[class]` | your class |
+| `[roles]` | the roles you've ticked, e.g. Tank/Healer |
+| `[dungeon]` | the dungeon they're listed for |
+| `[name]` | your name |
+| `[target]` | their name |
+| `[zone]` | the zone you're in |
+
+For example, `Hey [target], [level] [class] here, free for [dungeon]?` becomes "Hey Skeron, 21 Mage here, free for Deadmines?". The Messages window shows a preview as you type.
 
 ## Usage
 
