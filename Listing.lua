@@ -101,23 +101,15 @@ function L.SetCategory(id)
     L.categoryID = id
     wipe(L.collapsed)
     ResetActivities()
-    -- Collapse groups with nothing at your level, when there are several (as the game does).
+    -- "No XP for you" starts folded away, unless your listing already includes some of it.
     if id then
-        local groups = ns.GetGroupedActivities(id)
-        local named = 0
-        for _, g in ipairs(groups) do if g.groupID ~= 0 then named = named + 1 end end
-        if named > 1 then
-            local level = UnitLevel("player")
-            for _, g in ipairs(groups) do
-                if g.groupID ~= 0 then
-                    local suggested = false
-                    for _, aid in ipairs(g.activities) do
-                        local a = ns.GetActivity(aid)
-                        if a and a.minLevelSuggestion <= level and level <= a.maxLevelSuggestion then suggested = true break end
-                    end
-                    L.collapsed[g.groupID] = not suggested
-                end
+        local sections = ns.ActivitySections(id)
+        for _, key in ipairs({ "none", "other" }) do
+            local anyPicked = false
+            for _, aid in ipairs(sections[key] or {}) do
+                if L.selected[aid] then anyPicked = true break end
             end
+            L.collapsed[key] = not anyPicked
         end
     end
 end
@@ -327,19 +319,19 @@ local page, U
 local catView, actView, lockedView, details
 local rows, list, scroll = {}, {}, 0
 
+-- The tree: one section per what an activity gives you in XP (Full XP for you, Above your level,
+-- Some XP, No XP for you), lowest level first, as the Browse activity menu.
 local function Flatten()
     wipe(list)
     if not L.categoryID then return end
-    local groups = ns.GetGroupedActivities(L.categoryID)
-    local named = 0
-    for _, g in ipairs(groups) do if g.groupID ~= 0 then named = named + 1 end end
-    for _, g in ipairs(groups) do
-        if g.groupID == 0 then
-            for _, id in ipairs(g.activities) do list[#list + 1] = { activityID = id, indent = 0 } end
-        else
-            list[#list + 1] = { group = g, collapsible = named > 1 }
-            if not (named > 1 and L.collapsed[g.groupID]) then
-                for _, id in ipairs(g.activities) do list[#list + 1] = { activityID = id, indent = 1 } end
+    local sections = ns.ActivitySections(L.categoryID)
+    for _, sec in ipairs(ns.ACTIVITY_SECTIONS) do
+        local ids = sections[sec.key]
+        if #ids > 0 then
+            local g = { groupID = sec.key, name = sec.title, color = sec.color, activities = ids, section = sec.key }
+            list[#list + 1] = { group = g, collapsible = true }
+            if not L.collapsed[sec.key] then
+                for _, id in ipairs(ids) do list[#list + 1] = { activityID = id, indent = 1, section = sec } end
             end
         end
     end
@@ -461,9 +453,10 @@ local function RenderActivities()
                 row.check:SetPoint("LEFT", item.collapsible and 22 or 4, 0)
                 row.check:SetChecked(any)
                 row.check:SetCheckedTexture(all and "Interface\\Buttons\\UI-CheckBox-Check" or "Interface\\Buttons\\UI-MultiCheck-Up")
-                row.name:SetText(item.group.name or "?")
                 NativeFont(row.name, "LFGActivityHeader")
-                row.level:SetText("")
+                row.name:SetText((item.group.color or "") .. (item.group.name or "?") .. "|r")
+                NativeFont(row.level, "GameFontDisableSmall")
+                row.level:SetText(("%d"):format(#item.group.activities))
             else
                 local id = item.activityID
                 local a = ns.GetActivity(id)
@@ -472,32 +465,20 @@ local function RenderActivities()
                 row.check:SetPoint("LEFT", 22 + item.indent * 18, 0)
                 row.check:SetChecked(L.selected[id] and true or false)
                 row.check:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+                local sec = item.section or {}
+                NativeFont(row.name, sec.key == "none" and "LFGActivityEntryTrivial" or "GameFontHighlight")
                 row.name:SetText(ns.GetActivityName(id))
-                -- The game's own fonts for these: trivial (below you), difficult (above you), normal.
-                local fontName = "LFGActivityEntry"
-                if a and a.maxLevelSuggestion ~= 0 and a.maxLevelSuggestion < level then
-                    fontName = "LFGActivityEntryTrivial"
-                elseif a and a.minLevelSuggestion ~= 0 and a.minLevelSuggestion > level then
-                    fontName = "LFGActivityEntryDifficult"
-                end
-                NativeFont(row.name, fontName)
-                NativeFont(row.level, fontName)
+                -- The level range in its own column, in the section's colour (the heading says what it means).
+                NativeFont(row.level, "GameFontHighlightSmall")
                 local lo, hi = a and a.minLevelSuggestion or 0, a and a.maxLevelSuggestion or 0
                 if lo == 0 then
                     row.level:SetText("")
                 elseif lo == hi or hi == 0 then
-                    row.level:SetText((LFD_LEVEL_FORMAT_SINGLE or "Level %d"):format(lo))
+                    row.level:SetText((sec.color or "") .. lo .. "|r")
                 else
-                    row.level:SetText((LFD_LEVEL_FORMAT_RANGE or "Level %d - %d"):format(lo, hi))
+                    row.level:SetText(("%s%d-%d|r"):format(sec.color or "", lo, hi))
                 end
                 row.lock:SetShown(InstanceLock(id) ~= nil)
-                -- What it'd give you in XP, after the level range.
-                local st = XPFor(id)
-                if st == "none" then
-                    row.level:SetText(row.level:GetText() .. "  |cffff5555No XP|r")
-                elseif st == "partial" then
-                    row.level:SetText(row.level:GetText() .. "  |cffffd133Some XP|r")
-                end
             end
         end
     end
