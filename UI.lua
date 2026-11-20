@@ -545,11 +545,25 @@ local function CreatePane(parent, spec)
         HookPump(row) -- the row and its buttons
 
         -- A card's buttons show while you point at it, so the list reads as names and levels.
+        -- Lines 2 and 3 use the card's full width, stopping only for the corner note; while
+        -- the buttons show (you're pointing at the card), they end where the buttons begin.
+        function row:LayoutText(buttonsShown)
+            if not (self.line3 and self.rightEdge) then return end
+            if buttonsShown then
+                self.sub:SetPoint("RIGHT", self.rightEdge, "LEFT", -6, 0)
+                self.line3:SetPoint("RIGHT", self.rightEdge, "LEFT", -6, 0)
+            else
+                self.sub:SetPoint("RIGHT", self, "RIGHT", -10, 0)
+                self.line3:SetPoint("RIGHT", self.corner, "LEFT", -8, 0)
+            end
+        end
         function row:UpdateActions()
             local show = self.canAct and self:IsMouseOver()
             for _, b in ipairs(self.actions or {}) do b:SetShown(show) end
             if self.corner then self.corner:SetShown(not show) end
+            self:LayoutText(show)
         end
+        row:LayoutText(false)
         for _, b in ipairs(row.actions or {}) do
             b:HookScript("OnLeave", function() row:UpdateActions() end)
         end
@@ -687,9 +701,9 @@ local function BuildTextLines(row, rightEdge)
     row.line3:SetPoint("TOPLEFT", row.sub, "BOTTOMLEFT", 0, -2)
     row.line3:SetJustifyH("LEFT")
     row.line3:SetWordWrap(false)
-    -- Lines 2 and 3 end where the buttons begin.
-    row.sub:SetPoint("RIGHT", rightEdge, "LEFT", -6, 0)
-    row.line3:SetPoint("RIGHT", rightEdge, "LEFT", -6, 0)
+    -- Where lines 2 and 3 end depends on whether the buttons are showing (row:LayoutText).
+    row.rightEdge = rightEdge
+    if row.LayoutText then row:LayoutText(false) end
     row.level:ClearAllPoints()
     row.level:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
     row.level:SetJustifyH("LEFT")
@@ -711,7 +725,7 @@ local function BuildGroupRow(row)
     row.slots = {}
     for i = 5, 1, -1 do
         local s = Slot(row)
-        s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (5 - i) * (SLOT + 1), -6)
+        s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (5 - i) * (SLOT + 1), -4)
         row.slots[i] = s
     end
     row.raid = Text(row, "GameFontHighlight")
@@ -844,7 +858,7 @@ local function PopulatePlayer(row, e)
         local key = shown[i]
         if key then
             s:ClearAllPoints()
-            s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (#shown - i) * (SLOT + 1), -6)
+            s:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8 - (#shown - i) * (SLOT + 1), -4)
             SetSlot(s, key)
         else
             s:Hide()
