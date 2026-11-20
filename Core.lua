@@ -861,40 +861,93 @@ function ns.RememberWhoResults()
     end
 end
 
--- Look up one member whose location isn't known, with a /who. The game allows one every few
--- seconds, and only from a click, so each use finds one more. The answer comes back quietly
--- (no window opens) and the tooltip updates.
-local WHO_GAP = 5
+-- Finding where group members are, automatically. The game only runs /who from a click or key
+-- press, and allows about one every five seconds. So Seeker keeps a queue of members whose
+-- location isn't known (filled from every search, and moved to the front for groups you hover),
+-- and each click, scroll or key press in Seeker's window quietly looks up the next one. Answers
+-- come back without a window or chat line, and an open tooltip updates itself.
+local WHO_GAP = 5.5
+local ASKED_AGAIN_AFTER = 120 -- don't ask about the same name again for two minutes
 local lastLookup = 0
-function ns.LocateMembers(members)
-    if not (C_FriendList and C_FriendList.SendWho) then return end
-    local missing = {}
-    for _, p in ipairs(members or {}) do
-        if p.name and not (p.areaName and p.areaName ~= "") and not ns.GetKnownLocation(p.name) then
-            missing[#missing + 1] = p.name
+local queue, queued, asked = {}, {}, {}
+
+local function ShortKey(name)
+    return name and (name:match("^[^-]+") or name):lower()
+end
+
+local function NeedsLookup(p)
+    if not p.name or (p.areaName and p.areaName ~= "") or ns.GetKnownLocation(p.name) then return false end
+    local t = asked[ShortKey(p.name)]
+    return not t or GetTime() - t > ASKED_AGAIN_AFTER
+end
+
+-- Queue these players' lookups; first = true puts them at the front (a group you're looking at).
+function ns.QueueLocate(members, first)
+    for i = #(members or {}), 1, -1 do
+        local p = members[i]
+        local key = ShortKey(p.name)
+        if key and NeedsLookup(p) then
+            if queued[key] then
+                if first then
+                    for j, n in ipairs(queue) do
+                        if ShortKey(n) == key then table.remove(queue, j) break end
+                    end
+                    table.insert(queue, 1, p.name)
+                end
+            else
+                queued[key] = true
+                if first then table.insert(queue, 1, p.name) else queue[#queue + 1] = p.name end
+            end
         end
     end
-    if #missing == 0 then
-        ns.Print("Everyone's location is already known.")
-        return
+end
+
+-- Members of every group in the results, for the queue (the game sends only each lister's zone).
+function ns.QueueLocateResults(groups)
+    for _, e in ipairs(groups or {}) do
+        if not e.isSolo and not e.isSelf then
+            local members = {}
+            for i = 1, e.numMembers or 0 do
+                local ok, p = pcall(C_LFGList.GetSearchResultPlayerInfo, e.id, i)
+                if ok and p then members[#members + 1] = p end
+            end
+            ns.QueueLocate(members)
+        end
     end
-    local wait = WHO_GAP - (GetTime() - lastLookup)
-    if wait > 0 then
-        ns.Print(("The game allows one lookup every few seconds; try again in %d."):format(math.ceil(wait)))
-        return
+end
+
+-- Run the next lookup, if one's waiting and the game would allow it. Called from clicks, scrolls
+-- and key presses (a /who needs one); harmless to call often.
+function ns.PumpLocate()
+    if #queue == 0 or not (C_FriendList and C_FriendList.SendWho) then return end
+    if GetTime() - lastLookup < WHO_GAP then return end
+    if ns.IsWhoPageShown and ns.IsWhoPageShown() then return end -- the Who tab is yours
+    if ns.whoUntil and GetTime() < ns.whoUntil then return end
+    while #queue > 0 do
+        local name = table.remove(queue, 1)
+        local key = ShortKey(name)
+        queued[key] = nil
+        if not ns.GetKnownLocation(name) and not (asked[key] and GetTime() - asked[key] <= ASKED_AGAIN_AFTER) then
+            asked[key] = GetTime()
+            lastLookup = GetTime()
+            ns.silentWhoUntil = GetTime() + 6
+            if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end
+            local ok = pcall(C_FriendList.SendWho, 'n-"' .. (name:match("^[^-]+") or name) .. '"')
+            if not ok then ns.silentWhoUntil = nil end
+            -- If no answer comes (they logged off), hand /who back to chat anyway.
+            C_Timer.After(6.5, function()
+                if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then return end
+                if not (ns.IsWhoPageShown and ns.IsWhoPageShown()) and C_FriendList.SetWhoToUi then
+                    C_FriendList.SetWhoToUi(false)
+                end
+            end)
+            return
+        end
     end
-    lastLookup = GetTime()
-    local short = missing[1]:match("^[^-]+") or missing[1]
-    ns.silentWhoUntil = GetTime() + 6
-    if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end
-    local ok = pcall(C_FriendList.SendWho, 'n-"' .. short .. '"')
-    if not ok then
-        ns.silentWhoUntil = nil
-        ns.Print("Couldn't look them up just now.")
-        return
-    end
-    ns.Print(("Looking up where %s is...%s"):format(short,
-        #missing > 1 and (" (%d more: use it again in a few seconds)"):format(#missing - 1) or ""))
+end
+
+function ns.LocatePending()
+    return #queue
 end
 
 -- A /who answer arrived. Remember it, and if it was one of Seeker's quiet lookups, send /who

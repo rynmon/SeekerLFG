@@ -427,6 +427,15 @@ local function IconButton(parent, texture, size, tip, onClick)
     return b
 end
 
+-- Any click in Seeker is input, which a /who needs, so each one can run the next member lookup.
+local function HookPump(frame)
+    if frame.IsMouseEnabled and frame:IsMouseEnabled() and not frame.seekerPump then
+        frame.seekerPump = true
+        frame:HookScript("OnMouseDown", function() if ns.PumpLocate then ns.PumpLocate() end end)
+    end
+    for _, child in ipairs({ frame:GetChildren() }) do HookPump(child) end
+end
+
 ---------------------------------------------------------------------------
 -- List pane
 ---------------------------------------------------------------------------
@@ -470,6 +479,7 @@ local function CreatePane(parent, spec)
 
     f:EnableMouseWheel(true)
     f:SetScript("OnMouseWheel", function(_, delta)
+        ns.PumpLocate() -- a scroll is input, so a member lookup can run
         if IsControlKeyDown() then
             ns.StepScale(delta)
         else
@@ -532,10 +542,12 @@ local function CreatePane(parent, spec)
         row.level:SetJustifyH("CENTER")
 
         spec.buildRow(row)
+        HookPump(row) -- the row and its buttons
 
         row:SetScript("OnEnter", function(self) if self.item then ns.ShowEntryTooltip(self, self.item) end end)
         row:SetScript("OnLeave", GameTooltip_Hide)
         row:SetScript("OnClick", function(self, button)
+            ns.PumpLocate()
             if self.item and button == "RightButton" then ns.EntryMenu(self, self.item) end
         end)
         return row
@@ -927,13 +939,14 @@ local function AddMembers(e)
         GameTooltip:AddDoubleLine(left, where, 1, 1, 1, 1, 1, 1)
     end
     if unknown > 0 then
-        GameTooltip:AddLine("The game only shares where the lister is. Right-click > Find where members are.",
+        GameTooltip:AddLine("The game only shares where the lister is. Seeker finds the others as you use the window (one every few seconds).",
             0.5, 0.5, 0.5, true)
     end
 end
 
 function ns.ShowEntryTooltip(owner, e)
     AnchorBesideWindow(owner, not e.isSolo)
+    if not e.isSolo then pcall(ns.QueueLocate, ListingMembers(e), true) end
     local info = e.info
     -- Each part on its own, so one that fails can't hide the rest.
     local function Part(fn)
@@ -1067,7 +1080,6 @@ function ns.EntryMenu(owner, e)
             invite:SetEnabled(ns.CanInvite(e))
         else
             root:CreateButton("Request to join", function() ns.RequestToJoin(e) end)
-            root:CreateButton("Find where members are", function() ns.LocateMembers(ListingMembers(e)) end)
         end
         root:CreateDivider()
         root:CreateButton(LFG_LIST_REPORT_GROUP_FOR or "Report listing", function() ns.ReportListing(e, false) end)
@@ -1762,6 +1774,9 @@ local function BuildFrame()
 
     CreateSideTabs(f)
 
+    -- Every click in the window is input, so it can run the next member lookup as well.
+    HookPump(f)
+
     f:SetScript("OnShow", function()
         PlaySound(SOUNDKIT.IG_CHARACTER_INFO_OPEN)
         ns.ShowTab(db.tab or "browse")
@@ -1966,6 +1981,8 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "LFG_LIST_SEARCH_RESULTS_RECEIVED" then
         ns.searching, ns.searchFailed = false, false
         ns.CheckNewMatches()
+        local okF, groups = pcall(ns.GetFiltered)
+        if okF then pcall(ns.QueueLocateResults, groups) end
         ns.Render()
     elseif event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
         -- As the game does: a new listing (or an update you made) plays the queue sound and
@@ -2059,6 +2076,7 @@ BINDING_NAME_SEEKERLFG_SEARCH = "Search again (announces new matches)"
 
 function SeekerLFG_BindingToggle()
     ns.Toggle()
+    ns.PumpLocate()
 end
 
 function SeekerLFG_BindingSearch()
@@ -2067,4 +2085,5 @@ function SeekerLFG_BindingSearch()
         ns.db.categoryID = cats[1] and cats[1].id
     end
     if ns.DoSearch() then ns.Render() end
+    ns.PumpLocate()
 end
