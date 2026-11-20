@@ -1,0 +1,791 @@
+-- Seeker: data layer (search results, XP rule, filters, actions).
+-- Behaviour mirrors Forever's own group finder (Blizzard_GroupFinder_VanillaStyle) where it has one.
+local ADDON, ns = ...
+
+ns.NAME = "Seeker LFG"
+
+-- WoW Forever hotfix (Nov 2026): kill XP is nullified when the highest-level
+-- party member is MORE than 12 levels above the enemy.
+ns.XP_GAP = 12
+
+local defaults = {
+    categoryID = nil,
+    activityIDs = {},      -- set: activityID -> true (none = the whole category, as the game does)
+    searchSelf = false,    -- "Your listing" picked in the category dropdown
+    minimapButton = true,
+    replaceNative = false, -- open Seeker in place of the game's Looking for Group window
+    useWhisperMessenger = true, -- whisper through Whisper Messenger when it's installed
+    minimapAngle = 200,
+    tab = "browse",
+    filters = {
+        text = "",
+        xpMode = "strict",   -- "off" | "strict" | "lenient"
+        includeSelf = true,  -- count my own level as a party member for the XP check
+        levelMin = nil,
+        levelMax = nil,
+        -- Toggles: none on means no filter.
+        playerRoles = { tank = false, healer = false, dps = false }, -- player is willing to...
+        groupNeeds = { tank = false, healer = false, dps = false },  -- group still has room for...
+        classes = {},                                                -- players of these classes only
+        hideFull = false,
+        hideUnknown = false,
+        hideFar = false,     -- hide solo players standing on another continent from their dungeon
+    },
+}
+
+local function ApplyDefaults(dst, src)
+    for k, v in pairs(src) do
+        if type(v) == "table" then
+            if type(dst[k]) ~= "table" then dst[k] = {} end
+            ApplyDefaults(dst[k], v)
+        elseif dst[k] == nil then
+            dst[k] = v
+        end
+    end
+end
+
+function ns.InitDB()
+    SeekerLFGDB = SeekerLFGDB or {}
+    -- 0.6 kept one activity; carry it over.
+    if SeekerLFGDB.activityID then
+        SeekerLFGDB.activityIDs = { [SeekerLFGDB.activityID] = true }
+        SeekerLFGDB.activityID = nil
+    end
+    -- 0.8 opens at the game's own window height: forget sizes saved for the old, larger window.
+    if (SeekerLFGDB.layout or 0) < 2 then
+        SeekerLFGDB.scale, SeekerLFGDB.pos = nil, nil
+        SeekerLFGDB.layout = 2
+    end
+    ApplyDefaults(SeekerLFGDB, defaults)
+    ns.db = SeekerLFGDB
+end
+
+function ns.Print(...)
+    print("|cff66ccffSeeker LFG|r:", ...)
+end
+
+local LFG = C_LFGList or {}
+ns.LFG = LFG
+
+---------------------------------------------------------------------------
+-- Categories / activities (as the game lists them)
+---------------------------------------------------------------------------
+function ns.GetCategoryName(id)
+    if not id then return nil end
+    if LFG.GetLfgCategoryInfo then
+        local ci = LFG.GetLfgCategoryInfo(id)
+        return ci and ci.name
+    end
+end
+
+function ns.GetCategoryInfo(id)
+    return id and LFG.GetLfgCategoryInfo and LFG.GetLfgCategoryInfo(id)
+end
+
+local activityCache = {}
+function ns.GetActivity(id)
+    if not id then return nil end
+    local a = activityCache[id]
+    if a == nil then
+        a = (LFG.GetActivityInfoTable and LFG.GetActivityInfoTable(id)) or false
+        activityCache[id] = a
+    end
+    return a or nil
+end
+
+function ns.GetActivityName(id, short)
+    local a = ns.GetActivity(id)
+    if not a then return "?" end
+    -- The game prefers the short name for consistency.
+    if a.shortName and a.shortName ~= "" then return a.shortName end
+    return a.fullName or "?"
+end
+
+-- Approximate enemy level range for an activity: the suggested range, else the entry range.
+function ns.GetActivityRange(id)
+    local a = ns.GetActivity(id)
+    if not a then return nil end
+    local lo = a.minLevelSuggestion
+    if not lo or lo == 0 then lo = a.minLevel end
+    local hi = a.maxLevelSuggestion
+    if not hi or hi == 0 then hi = a.maxLevel end
+    if not lo or lo == 0 then return nil end
+    if not hi or hi < lo then hi = lo end
+    return lo, hi
+end
+
+function ns.IgnoringLevelRanges()
+    return GetCVarBool and GetCVarBool("disableSuggestedLevelActivityFilter")
+end
+
+function ns.SetIgnoreLevelRanges(on)
+    SetCVar("disableSuggestedLevelActivityFilter", on and "1" or "0")
+end
+
+-- LFGUtil_GetFilteredActivities: the category's activities, minus those outside your level's
+-- suggested range unless "show all level ranges" is on (your own listing's are always kept).
+function ns.GetFilteredActivities(categoryID, groupID)
+    if not categoryID or not LFG.GetAvailableActivities then return {} end
+    local activities = LFG.GetAvailableActivities(categoryID, groupID) or {}
+    if not ns.IgnoringLevelRanges() then
+        local active = LFG.GetActiveEntryInfo and LFG.GetActiveEntryInfo()
+        local level = UnitLevel("player")
+        for i = #activities, 1, -1 do
+            local id = activities[i]
+            if not (active and tContains(active.activityIDs, id)) then
+                local a = ns.GetActivity(id)
+                if a and ((a.minLevelSuggestion > 0 and a.minLevelSuggestion > level)
+                    or (a.maxLevelSuggestion > 0 and a.maxLevelSuggestion < level)) then
+                    table.remove(activities, i)
+                end
+            end
+        end
+    end
+    return activities
+end
+
+function ns.GetActivityGroupName(groupID)
+    if groupID and groupID ~= 0 and LFG.GetActivityGroupInfo then
+        return (LFG.GetActivityGroupInfo(groupID))
+    end
+end
+
+local function SortActivities(list)
+    table.sort(list, function(x, y)
+        local a, b = ns.GetActivity(x), ns.GetActivity(y)
+        if a and b and a.orderIndex ~= b.orderIndex then return (a.orderIndex or 0) < (b.orderIndex or 0) end
+        local na, nb = ns.GetActivityName(x), ns.GetActivityName(y)
+        if na ~= nb then return na < nb end
+        return x < y
+    end)
+end
+
+-- Activities grouped as the game groups them: { {groupID, name, activities = {...}}, ... },
+-- free-floating activities (group 0) first.
+function ns.GetGroupedActivities(categoryID, activities)
+    activities = activities or ns.GetFilteredActivities(categoryID)
+    local byGroup = {}
+    for _, id in ipairs(activities) do
+        local a = ns.GetActivity(id)
+        if a then
+            local g = a.groupFinderActivityGroupID or 0
+            byGroup[g] = byGroup[g] or {}
+            table.insert(byGroup[g], id)
+        end
+    end
+    local out = {}
+    for g, list in pairs(byGroup) do
+        SortActivities(list)
+        local name, order = nil, 0
+        if g ~= 0 and LFG.GetActivityGroupInfo then name, order = LFG.GetActivityGroupInfo(g) end
+        out[#out + 1] = { groupID = g, name = name, order = order or 0, activities = list }
+    end
+    table.sort(out, function(a, b)
+        if (a.groupID == 0) ~= (b.groupID == 0) then return a.groupID == 0 end
+        if a.order ~= b.order then return a.order < b.order end
+        return (a.name or "") < (b.name or "")
+    end)
+    return out
+end
+
+-- Categories that have anything to show at your level (as the game's dropdown does).
+function ns.GetCategories()
+    local out = {}
+    for _, id in ipairs(LFG.GetAvailableCategories and LFG.GetAvailableCategories() or {}) do
+        if #ns.GetFilteredActivities(id) > 0 then
+            out[#out + 1] = { id = id, name = ns.GetCategoryName(id) or ("Category " .. id) }
+        end
+    end
+    return out
+end
+
+-- Browse selection
+function ns.SelectedActivities()
+    local list = {}
+    for id, on in pairs(ns.db.activityIDs) do
+        if on then list[#list + 1] = id end
+    end
+    if #list == 0 then return nil end
+    SortActivities(list)
+    return list
+end
+
+function ns.IsActivitySelected(id)
+    return ns.db.activityIDs[id] and true or false
+end
+
+function ns.SetActivitySelected(id, on)
+    ns.db.activityIDs[id] = on and true or nil
+end
+
+function ns.ClearActivitySelection()
+    wipe(ns.db.activityIDs)
+end
+
+---------------------------------------------------------------------------
+-- Your own listing
+---------------------------------------------------------------------------
+function ns.HasListing()
+    return LFG.HasActiveEntryInfo and LFG.HasActiveEntryInfo() or false
+end
+
+function ns.GetListing()
+    return LFG.GetActiveEntryInfo and LFG.GetActiveEntryInfo()
+end
+
+function ns.CanEditListing()
+    return not IsInGroup(LE_PARTY_CATEGORY_HOME) or UnitIsGroupLeader("player", LE_PARTY_CATEGORY_HOME)
+end
+
+---------------------------------------------------------------------------
+-- Continents: where a dungeon is, and where a player is standing
+---------------------------------------------------------------------------
+local KALIMDOR, EASTERN = "Kalimdor", "Eastern Kingdoms"
+
+-- Matched against the activity's name (lowercase, substring).
+local DUNGEON_CONTINENT = {
+    { "ragefire", KALIMDOR }, { "wailing caverns", KALIMDOR }, { "blackfathom", KALIMDOR },
+    { "razorfen", KALIMDOR }, { "zul'farrak", KALIMDOR }, { "maraudon", KALIMDOR },
+    { "dire maul", KALIMDOR }, { "onyxia", KALIMDOR }, { "ahn'qiraj", KALIMDOR },
+    { "deadmines", EASTERN }, { "shadowfang", EASTERN }, { "stockade", EASTERN },
+    { "gnomeregan", EASTERN }, { "scarlet", EASTERN }, { "uldaman", EASTERN },
+    { "sunken temple", EASTERN }, { "atal'hakkar", EASTERN }, { "blackrock", EASTERN },
+    { "scholomance", EASTERN }, { "stratholme", EASTERN }, { "molten core", EASTERN },
+    { "blackwing", EASTERN }, { "zul'gurub", EASTERN }, { "naxxramas", EASTERN },
+}
+
+local activityContinent = {}
+function ns.GetActivityContinent(id)
+    if not id then return nil end
+    local c = activityContinent[id]
+    if c == nil then
+        c = false
+        local a = ns.GetActivity(id)
+        local name = ((a and a.fullName) or ns.GetActivityName(id)):lower()
+        for _, pair in ipairs(DUNGEON_CONTINENT) do
+            if name:find(pair[1], 1, true) then c = pair[2] break end
+        end
+        activityContinent[id] = c
+    end
+    return c or nil
+end
+
+-- Zone name -> continent name, from the game's own map tree.
+local zoneContinent
+local function AddContinent(mapID)
+    local info = C_Map.GetMapInfo(mapID)
+    if not info or not info.name then return end
+    local cname = info.name
+    zoneContinent[cname] = cname
+    for _, child in ipairs(C_Map.GetMapChildrenInfo(mapID, nil, true) or {}) do
+        if child.name and not zoneContinent[child.name] then
+            zoneContinent[child.name] = cname
+        end
+    end
+end
+
+local function BuildZoneMap()
+    zoneContinent = {}
+    if not (C_Map and C_Map.GetMapInfo and C_Map.GetMapChildrenInfo) then return end
+    local id = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    local top
+    while id do
+        local info = C_Map.GetMapInfo(id)
+        if not info then break end
+        top = id
+        if not info.parentMapID or info.parentMapID == 0 then break end
+        id = info.parentMapID
+    end
+    local continentType = Enum and Enum.UIMapType and Enum.UIMapType.Continent or 2
+    if top then
+        for _, c in ipairs(C_Map.GetMapChildrenInfo(top, continentType, true) or {}) do
+            AddContinent(c.mapID)
+        end
+    end
+    if not next(zoneContinent) then
+        pcall(AddContinent, 1414)
+        pcall(AddContinent, 1415)
+    end
+end
+
+function ns.GetZoneContinent(areaName)
+    if not areaName or areaName == "" then return nil end
+    if not zoneContinent or not next(zoneContinent) then BuildZoneMap() end
+    return zoneContinent[areaName]
+end
+
+-- Which of an entry's activities matter: the ones you picked (if it has any), else all of them.
+local function RelevantActivities(e)
+    local sel = ns.SelectedActivities()
+    if sel then
+        local out = {}
+        for _, id in ipairs(sel) do
+            if tContains(e.activityIDs, id) then out[#out + 1] = id end
+        end
+        if #out > 0 then return out end
+    end
+    return e.activityIDs
+end
+ns.RelevantActivities = RelevantActivities
+
+-- For a solo player: "near" (same continent as one of their dungeons), "far", or "unknown".
+function ns.EvaluateDistance(e)
+    local p = e.leader
+    e.continent = p and ns.GetZoneContinent(p.areaName)
+    e.dungeonContinent = nil
+    e.distance = "unknown"
+    e.inDungeon = false
+    local acts = RelevantActivities(e)
+
+    -- Already inside (or at) the dungeon they listed for: "The Deadmines" vs "Deadmines".
+    local function Bare(s) return ((s or ""):lower():gsub("^the ", ""):gsub("%s*%b()", "")) end
+    local here = p and Bare(p.areaName)
+    if here and here ~= "" then
+        for _, id in ipairs(acts) do
+            local a = ns.GetActivity(id)
+            local dungeon = Bare(a and a.fullName or ns.GetActivityName(id))
+            if dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true)) then
+                e.distance, e.inDungeon = "near", true
+                e.dungeonContinent = ns.GetActivityContinent(id)
+                e.continent = e.continent or e.dungeonContinent
+                return
+            end
+        end
+    end
+
+    if not e.continent then return end
+    for _, id in ipairs(acts) do
+        local dc = ns.GetActivityContinent(id)
+        if dc then
+            e.dungeonContinent = e.dungeonContinent or dc
+            if dc == e.continent then
+                e.distance, e.dungeonContinent = "near", dc
+                return
+            end
+            e.distance = "far"
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- Search (LFGBrowse_DoSearch)
+---------------------------------------------------------------------------
+-- Category and activities to search: your listing's when "Your listing" is picked, else the
+-- picked ones, else everything in the category you can see at your level.
+function ns.SearchTarget()
+    local db = ns.db
+    if db.searchSelf then
+        local entry = ns.GetListing()
+        if entry and entry.activityIDs[1] then
+            local a = ns.GetActivity(entry.activityIDs[1])
+            return a and a.categoryID, entry.activityIDs
+        end
+        db.searchSelf = false
+    end
+    local cat = db.categoryID
+    if not cat then return nil end
+    local acts = ns.SelectedActivities() or ns.GetFilteredActivities(cat)
+    return cat, acts
+end
+
+function ns.DoSearch()
+    if not LFG.Search then
+        ns.Print("Searching isn't available on this client.")
+        return false
+    end
+    local cat, acts = ns.SearchTarget()
+    if not cat or cat == 0 then
+        ns.Print("Pick a category first.")
+        return false
+    end
+    local ok, err = pcall(LFG.Search, cat, 0, 0, nil, false, nil, acts)
+    if not ok then
+        ns.Print("Search failed: " .. tostring(err))
+        return false
+    end
+    ns.searching, ns.searchFailed = true, false
+    local started = GetTime()
+    ns.searchStarted = started
+    -- If no answer comes (throttled or blocked), don't leave Search greyed out.
+    C_Timer.After(6, function()
+        if ns.searching and ns.searchStarted == started then
+            ns.searching = false
+            if ns.Render then ns.Render() end
+        end
+    end)
+    return true
+end
+
+---------------------------------------------------------------------------
+-- Result collection
+---------------------------------------------------------------------------
+local function BuildEntry(id, myActivities)
+    local info = LFG.GetSearchResultInfo(id)
+    if not info or info.isDelisted then return nil end
+
+    local e = {
+        id = id,
+        info = info,
+        members = {},
+        activityIDs = info.activityIDs or {},
+        age = info.age or 0,
+        isSelf = info.hasSelf and true or false,
+    }
+    local n = info.numMembers or 1
+    for i = 1, n do
+        local p = LFG.GetSearchResultPlayerInfo and LFG.GetSearchResultPlayerInfo(id, i)
+        if p then
+            e.members[#e.members + 1] = p
+            if p.isLeader then e.leader = p end
+            if p.level and (not e.maxLevel or p.level > e.maxLevel) then e.maxLevel = p.level end
+            if p.level and (not e.minLevel or p.level < e.minLevel) then e.minLevel = p.level end
+        end
+    end
+    if #e.members == 0 and LFG.GetSearchResultLeaderInfo then
+        local p = LFG.GetSearchResultLeaderInfo(id)
+        if p then
+            e.members[1] = p
+            e.leader = p
+            e.maxLevel, e.minLevel = p.level, p.level
+        end
+    end
+    e.leader = e.leader or e.members[1]
+    e.leaderName = info.leaderName or (e.leader and e.leader.name)
+    e.numMembers = n
+    e.isSolo = n <= 1
+
+    local t, h, d = 0, 0, 0
+    for _, p in ipairs(e.members) do
+        local r = p.assignedRole
+        if r == "TANK" then t = t + 1
+        elseif r == "HEALER" then h = h + 1
+        elseif r == "DAMAGER" then d = d + 1 end
+    end
+    e.tanks, e.healers, e.dps = t, h, d
+    e.roles = e.leader and e.leader.lfgRoles
+    if LFG.GetSearchResultMemberCounts then
+        local ok, counts = pcall(LFG.GetSearchResultMemberCounts, id)
+        if ok then e.counts = counts end
+    end
+
+    local maxPlayers = 0
+    for _, aid in ipairs(e.activityIDs) do
+        local a = ns.GetActivity(aid)
+        if a and a.maxNumPlayers and a.maxNumPlayers > maxPlayers then maxPlayers = a.maxNumPlayers end
+    end
+    e.maxPlayers = maxPlayers > 0 and maxPlayers or 5
+
+    -- Listings for one of your own listed activities (the game puts these first, in blue).
+    if myActivities then
+        for _, aid in ipairs(e.activityIDs) do
+            if tContains(myActivities, aid) then e.matchesMine = true break end
+        end
+    end
+    return e
+end
+
+function ns.Collect()
+    local groups, players = {}, {}
+    local getter = LFG.GetFilteredSearchResults or LFG.GetSearchResults
+    if not getter then return groups, players end
+    local _, results = getter()
+    if type(results) ~= "table" then return groups, players end
+    local mine = ns.GetListing()
+    mine = mine and mine.activityIDs
+    for _, id in ipairs(results) do
+        local ok, e = pcall(BuildEntry, id, mine)
+        if ok and e then
+            if e.isSolo then players[#players + 1] = e else groups[#groups + 1] = e end
+        end
+    end
+    return groups, players
+end
+
+---------------------------------------------------------------------------
+-- XP evaluation
+---------------------------------------------------------------------------
+local XP_RANK = { safe = 3, partial = 2, none = 1, unknown = 0 }
+ns.XP_RANK = XP_RANK
+
+-- status: "safe"    = highest level <= lowest mobs + 12  (full XP whole instance)
+--         "partial" = highest level <= highest mobs + 12 (XP from the tougher mobs only)
+--         "none"    = above every mob + 12 (no kill XP at all)
+--         "unknown"
+function ns.EvaluateXP(e)
+    local level = e.maxLevel
+    e.selfIsHighest = false
+    if ns.db.filters.includeSelf and not e.isSelf then
+        local me = UnitLevel("player")
+        if me and me > 0 and (not level or me > level) then
+            level = me
+            e.selfIsHighest = true
+        end
+    end
+    e.effectiveLevel = level
+    e.xpStatus, e.xpLo, e.xpHi, e.xpActivity = "unknown", nil, nil, nil
+    if not level then return end
+
+    for _, id in ipairs(RelevantActivities(e)) do
+        local lo, hi = ns.GetActivityRange(id)
+        if lo then
+            local st
+            if level <= lo + ns.XP_GAP then st = "safe"
+            elseif level <= hi + ns.XP_GAP then st = "partial"
+            else st = "none" end
+            if XP_RANK[st] > XP_RANK[e.xpStatus] then
+                e.xpStatus, e.xpLo, e.xpHi, e.xpActivity = st, lo, hi, id
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- Filtering
+---------------------------------------------------------------------------
+local function SafeLower(s)
+    if type(s) ~= "string" then return "" end
+    local ok, r = pcall(string.lower, s)
+    return ok and r or ""
+end
+
+local function MatchesText(e, needle)
+    local parts = { e.leaderName, e.info.name, e.info.comment }
+    for _, id in ipairs(e.activityIDs) do parts[#parts + 1] = ns.GetActivityName(id) end
+    for _, p in ipairs(e.members) do
+        parts[#parts + 1] = p.name
+        parts[#parts + 1] = p.className
+        parts[#parts + 1] = p.areaName
+    end
+    for _, s in ipairs(parts) do
+        local hay = SafeLower(s)
+        if hay ~= "" and hay:find(needle, 1, true) then return true end
+    end
+    return false
+end
+
+-- Open seats by role, from the game's own counts when it gives them.
+function ns.Remaining(e, role)
+    local c = e.counts
+    if c then
+        local key = ({ tank = "TANK_REMAINING", healer = "HEALER_REMAINING", dps = "DAMAGER_REMAINING" })[role]
+        if c[key] then return c[key] end
+    end
+    if e.maxPlayers - e.numMembers <= 0 then return 0 end
+    if role == "tank" then return e.tanks == 0 and 1 or 0 end
+    if role == "healer" then return e.healers == 0 and 1 or 0 end
+    return math.max(0, e.maxPlayers - 2 - e.dps)
+end
+
+local function Passes(e, f)
+    if e.isSelf then
+        ns.EvaluateXP(e)
+        if e.isSolo then pcall(ns.EvaluateDistance, e) end
+        return true -- your own listing always shows, at the top
+    end
+
+    local sel = ns.SelectedActivities()
+    if sel and not ns.db.searchSelf then
+        local found = false
+        for _, id in ipairs(e.activityIDs) do if ns.db.activityIDs[id] then found = true break end end
+        if not found then return false end
+    end
+
+    if f.text and f.text ~= "" and not MatchesText(e, SafeLower(f.text)) then return false end
+
+    if e.maxLevel then
+        if f.levelMin and e.minLevel and e.minLevel < f.levelMin then return false end
+        if f.levelMax and e.maxLevel > f.levelMax then return false end
+    elseif f.hideUnknown then
+        return false
+    end
+
+    ns.EvaluateXP(e)
+    if e.xpStatus == "unknown" then
+        if f.hideUnknown and f.xpMode ~= "off" then return false end
+    elseif f.xpMode == "strict" and e.xpStatus ~= "safe" then
+        return false
+    elseif f.xpMode == "lenient" and e.xpStatus == "none" then
+        return false
+    end
+
+    if e.isSolo then
+        e.distance = "unknown"
+        pcall(ns.EvaluateDistance, e)
+        if f.hideFar and e.distance == "far" then return false end
+        local want = f.playerRoles
+        if want.tank or want.healer or want.dps then
+            local r = e.roles
+            if not (r and ((want.tank and r.tank) or (want.healer and r.healer) or (want.dps and r.dps))) then
+                return false
+            end
+        end
+        if next(f.classes) then
+            local cls = e.leader and e.leader.classFilename
+            if not (cls and f.classes[cls]) then return false end
+        end
+    else
+        local open = e.maxPlayers - e.numMembers
+        if f.hideFull and open <= 0 then return false end
+        local need = f.groupNeeds
+        if need.tank or need.healer or need.dps then
+            local ok = (need.tank and ns.Remaining(e, "tank") > 0) or (need.healer and ns.Remaining(e, "healer") > 0)
+                or (need.dps and ns.Remaining(e, "dps") > 0)
+            if not ok then return false end
+        end
+    end
+    return true
+end
+
+function ns.AnyOn(t)
+    for _, v in pairs(t) do if v then return true end end
+    return false
+end
+
+-- Your listing first, then listings for your listed activities (as the game sorts), then XP, newest.
+local function SortEntries(a, b)
+    if a.isSelf ~= b.isSelf then return a.isSelf end
+    if (a.matchesMine or false) ~= (b.matchesMine or false) then return a.matchesMine or false end
+    local ra, rb = XP_RANK[a.xpStatus] or 0, XP_RANK[b.xpStatus] or 0
+    if ra ~= rb then return ra > rb end
+    if (a.age or 0) ~= (b.age or 0) then return (a.age or 0) < (b.age or 0) end
+    return a.id < b.id
+end
+
+-- Returns filtered+sorted groups, players and the unfiltered totals.
+function ns.GetFiltered()
+    local groups, players = ns.Collect()
+    local f = ns.db.filters
+    local fg, fp = {}, {}
+    for _, e in ipairs(groups) do if Passes(e, f) then fg[#fg + 1] = e end end
+    for _, e in ipairs(players) do if Passes(e, f) then fp[#fp + 1] = e end end
+    table.sort(fg, SortEntries)
+    table.sort(fp, SortEntries)
+    return fg, fp, #groups, #players
+end
+
+---------------------------------------------------------------------------
+-- Actions (as the game's own finder offers them)
+---------------------------------------------------------------------------
+local function ActiveChatEditBox()
+    if ChatFrameUtil and ChatFrameUtil.GetActiveWindow then return ChatFrameUtil.GetActiveWindow() end
+    if ChatEdit_GetActiveWindow then return ChatEdit_GetActiveWindow() end
+end
+
+-- Whisper Messenger (if installed): its public API, connected under our name so it can be allowed
+-- or blocked from Whisper Messenger's own settings.
+local wmClient
+local function WhisperMessenger()
+    local api = _G.WhisperMessengerAPI
+    if type(api) ~= "table" then return nil end
+    if not wmClient and type(api.Connect) == "function" then
+        local ok, client = pcall(api.Connect, "Seeker LFG")
+        if ok and type(client) == "table" then wmClient = client end
+    end
+    return wmClient or api
+end
+
+function ns.HasWhisperMessenger()
+    local wm = WhisperMessenger()
+    return wm ~= nil and type(wm.OpenConversation) == "function"
+end
+
+function ns.Whisper(name, text)
+    if not name then return end
+    -- Whisper Messenger first, when it's installed and switched on here: the conversation opens in
+    -- its window, with any request text ready in its composer. If it declines (in combat with its
+    -- window closed, competitive content, or Seeker blocked in its settings), the game's whisper.
+    if ns.db.useWhisperMessenger ~= false and ns.HasWhisperMessenger() then
+        local ok, opened = pcall(WhisperMessenger().OpenConversation, name, text)
+        if ok and opened then return end
+    end
+    if ChatFrameUtil and ChatFrameUtil.SendTell then
+        ChatFrameUtil.SendTell(name)
+    elseif ChatFrame_SendTell then
+        ChatFrame_SendTell(name)
+    end
+    if text then
+        local eb = ActiveChatEditBox()
+        if eb and eb.Insert then eb:Insert(text) end
+    end
+end
+
+-- The game only lets you invite solo players, and only when you can invite (solo, leader or assist).
+function ns.CanInvite(e)
+    if not e or not e.isSolo or e.isSelf then return false end
+    return not IsInGroup() or UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+end
+
+function ns.Invite(name)
+    if not name then return end
+    if C_PartyInfo and C_PartyInfo.InviteUnit then
+        C_PartyInfo.InviteUnit(name)
+    elseif InviteUnit then
+        InviteUnit(name)
+    end
+end
+
+-- Forever has no applications: you ask the leader. This opens a whisper with a request ready to
+-- send (your level, class, roles and the dungeon); you press Enter to send it.
+function ns.RequestToJoin(e)
+    if not e or not e.leaderName then return end
+    local level = UnitLevel("player")
+    local className = UnitClass("player")
+    local roles = {}
+    local r = C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles()
+    if r then
+        if r.tank then roles[#roles + 1] = TANK or "Tank" end
+        if r.healer then roles[#roles + 1] = HEALER or "Healer" end
+        if r.dps then roles[#roles + 1] = DAMAGER or "DPS" end
+    end
+    local act = e.xpActivity or RelevantActivities(e)[1]
+    local what = act and ns.GetActivityName(act) or "your group"
+    local msg = ("Hi! Could I join you for %s? I'm a level %d %s%s."):format(what, level or 0, className or "",
+        #roles > 0 and (" (" .. table.concat(roles, "/") .. ")") or "")
+    ns.Whisper(e.leaderName, msg)
+end
+
+function ns.ReportListing(e, advertisement)
+    if not (ReportInfo and ReportFrame and Enum.ReportType and Enum.ReportType.GroupFinderPosting) then
+        ns.Print("Reporting isn't available here.")
+        return
+    end
+    local ok, err = pcall(function()
+        local info = ReportInfo:CreateReportInfoFromType(Enum.ReportType.GroupFinderPosting)
+        info:SetGroupFinderSearchResultID(e.id)
+        if advertisement then
+            ReportFrame:Hide()
+            ReportFrame:SetMinorCategoryFlag(Enum.ReportMinorCategory.Advertisement, true)
+            ReportFrame:SetMajorType(Enum.ReportMajorCategory.InappropriateCommunication)
+            ReportFrame:InitiateReport(info, e.leaderName, nil, nil, true)
+        else
+            ReportFrame:InitiateReport(info, e.leaderName)
+        end
+    end)
+    if not ok then ns.Print("Couldn't open the report: " .. tostring(err)) end
+end
+
+---------------------------------------------------------------------------
+-- Debug dump to help adapt to client API differences
+---------------------------------------------------------------------------
+function ns.DebugDump()
+    local function has(fn) return LFG[fn] and "yes" or "NO" end
+    ns.Print("Interface:", select(4, GetBuildInfo()))
+    for _, fn in ipairs({ "Search", "GetFilteredSearchResults", "GetSearchResultInfo", "GetSearchResultPlayerInfo",
+        "GetSearchResultMemberCounts", "CreateListing", "UpdateListing", "RemoveListing", "GetActiveEntryInfo" }) do
+        ns.Print("  C_LFGList." .. fn .. ":", has(fn))
+    end
+    ns.Print("  Comment box:", _G.LFGListingComment and "found" or "not loaded")
+    ns.Print("  Game LFG windows found:", #(ns.nativeFound or {}) > 0 and table.concat(ns.nativeFound, ", ") or "none yet")
+    ns.Print("  Replace mode:", ns.db.replaceNative and "on" or "off")
+    ns.Print("  Listed:", ns.HasListing() and "yes" or "no")
+    local getter = LFG.GetFilteredSearchResults or LFG.GetSearchResults
+    if not getter then return end
+    local total, results = getter()
+    ns.Print("Results:", tostring(total))
+    local id = results and results[1]
+    if not id then return end
+    local info = LFG.GetSearchResultInfo(id)
+    if info then
+        for k, v in pairs(info) do ns.Print("  info." .. tostring(k), tostring(v)) end
+    end
+end
