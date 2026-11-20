@@ -1549,47 +1549,68 @@ local function BuildFrame()
     end)
     f.catDD:SetPoint("TOPLEFT", LEFT, TOPBAR_Y)
 
-    -- Activities: several at once, grouped as the game groups them (one group: indented in the
-    -- menu; several: a submenu each, whose checkbox ticks the whole group).
+    -- Activities: sorted into what they'd give you in XP, lowest level first in each, with the level
+    -- range in its own right-hand column. Several can be ticked; none ticked means all of them.
     f.actDD = Dropdown(browse, 200, function(root)
         if db.searchSelf or not db.categoryID then
             root:CreateTitle(db.searchSelf and "Searching your listing's activities" or "Pick a category first")
             return
         end
-        root:CreateTitle("Green: full XP for you.  Yellow: some XP.")
-        root:CreateButton("All activities", function()
-            ns.ClearActivitySelection()
-            RefreshDropdowns()
-            ns.Render()
-        end)
         local function IsOn(id) return ns.IsActivitySelected(id) end
         local function ToggleActivity(id)
             ns.SetActivitySelected(id, not ns.IsActivitySelected(id))
             RefreshDropdowns()
             ns.QueueRender()
         end
-        local groups = ns.GetGroupedActivities(db.categoryID)
-        local namedGroups = 0
-        for _, g in ipairs(groups) do if g.groupID ~= 0 then namedGroups = namedGroups + 1 end end
-        for _, g in ipairs(groups) do
-            if g.groupID == 0 then
-                for _, id in ipairs(g.activities) do root:CreateCheckbox(ActivityLabel(id), IsOn, ToggleActivity, id) end
-            else
-                local function GroupOn()
-                    for _, id in ipairs(g.activities) do if ns.IsActivitySelected(id) then return true end end
-                    return false
-                end
-                local function GroupToggle()
-                    local on = not GroupOn()
-                    for _, id in ipairs(g.activities) do ns.SetActivitySelected(id, on) end
-                    RefreshDropdowns()
-                    ns.QueueRender()
-                end
-                local header = root:CreateCheckbox(g.name or "?", GroupOn, GroupToggle)
-                local parent = namedGroups > 1 and header or root
-                local indent = namedGroups > 1 and "%s" or (LFG_LIST_INDENT or "   %s")
-                for _, id in ipairs(g.activities) do
-                    parent:CreateCheckbox(indent:format(ActivityLabel(id)), IsOn, ToggleActivity, id)
+
+        local sections = ns.ActivitySections(db.categoryID)
+
+        -- Quick picks
+        root:CreateButton("All activities", function()
+            ns.ClearActivitySelection()
+            RefreshDropdowns()
+            ns.Render()
+        end)
+        if #sections.full > 0 then
+            root:CreateButton(("Every one with full XP for me (%d)"):format(#sections.full), function()
+                ns.ClearActivitySelection()
+                for _, id in ipairs(sections.full) do ns.SetActivitySelected(id, true) end
+                RefreshDropdowns()
+                ns.Render()
+            end)
+        end
+
+        for _, sec in ipairs(ns.ACTIVITY_SECTIONS) do
+            local list = sections[sec.key]
+            if #list > 0 then
+                root:CreateDivider()
+                root:CreateTitle(sec.title)
+                for _, id in ipairs(list) do
+                    local name = ns.GetActivityName(id)
+                    if sec.key == "none" then name = "|cff8a8a8a" .. name .. "|r" end
+                    local lo, hi = ns.GetActivityRange(id)
+                    local range = lo and (lo == hi and tostring(lo) or ("%d-%d"):format(lo, hi)) or ""
+                    local box = root:CreateCheckbox(name, IsOn, ToggleActivity, id)
+                    if box.AddInitializer and range ~= "" then
+                        -- The level range right-aligned, as the game's own menus line up a second column.
+                        box:AddInitializer(function(button)
+                            if not button.AttachFontString then
+                                if button.fontString then button.fontString:SetText(name .. "  " .. sec.color .. range .. "|r") end
+                                return
+                            end
+                            local right = button:AttachFontString()
+                            right:SetFontObject(GameFontHighlightSmall)
+                            right:SetHeight(20)
+                            right:SetPoint("RIGHT", -2, 0)
+                            right:SetJustifyH("RIGHT")
+                            right:SetText(sec.color .. range .. "|r")
+                            local width = 52 + (button.fontString and button.fontString:GetUnboundedStringWidth() or 120)
+                                + right:GetUnboundedStringWidth()
+                            return width, 20
+                        end)
+                    elseif range ~= "" and box.SetText then
+                        box:SetText(name .. "  " .. sec.color .. range .. "|r")
+                    end
                 end
             end
         end

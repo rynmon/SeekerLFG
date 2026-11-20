@@ -206,6 +206,46 @@ function ns.GetCategories()
     return out
 end
 
+-- What each activity would give you in XP at your level, for the activity menu's sections.
+ns.ACTIVITY_SECTIONS = {
+    { key = "full", title = "Full XP for you", color = "|cff55ff55" },
+    { key = "above", title = "Above your level", color = "|cffff9933" },
+    { key = "some", title = "Some XP (only the tougher mobs)", color = "|cffffd133" },
+    { key = "none", title = "No XP for you", color = "|cff8a8a8a" },
+    { key = "other", title = "Other", color = "|cff999999" },
+}
+
+function ns.ActivityXPClass(id)
+    local lo, hi = ns.GetActivityRange(id)
+    if not lo then return "other" end
+    local me = UnitLevel("player") or 0
+    if me > hi + ns.XP_GAP then return "none" end
+    if me > lo + ns.XP_GAP then return "some" end
+    if lo > me then return "above" end
+    return "full"
+end
+
+-- The category's activities in those sections, lowest level first in each.
+function ns.ActivitySections(categoryID)
+    local out = {}
+    for _, sec in ipairs(ns.ACTIVITY_SECTIONS) do out[sec.key] = {} end
+    for _, id in ipairs(ns.GetFilteredActivities(categoryID)) do
+        local list = out[ns.ActivityXPClass(id)]
+        list[#list + 1] = id
+    end
+    for _, list in pairs(out) do
+        table.sort(list, function(x, y)
+            local lx, hx = ns.GetActivityRange(x)
+            local ly, hy = ns.GetActivityRange(y)
+            lx, ly = lx or 999, ly or 999
+            if lx ~= ly then return lx < ly end
+            if (hx or 999) ~= (hy or 999) then return (hx or 999) < (hy or 999) end
+            return ns.GetActivityName(x) < ns.GetActivityName(y)
+        end)
+    end
+    return out
+end
+
 -- Browse selection
 function ns.SelectedActivities()
     local list = {}
