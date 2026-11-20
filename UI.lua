@@ -1575,6 +1575,12 @@ local function BuildFrame()
         if IsControlKeyDown() then ns.StepScale(delta) end
     end)
     AddGrip(f)
+
+    -- The addon's name and version, quietly in the title bar's right-hand side (every tab).
+    local brand = Text(f, "GameFontDisableSmall")
+    brand:SetPoint("TOPRIGHT", f, "TOPRIGHT", -30, -6)
+    brand:SetJustifyH("RIGHT")
+    brand:SetText("Seeker LFG" .. (ns.VERSION and ("  v" .. ns.VERSION) or ""))
     f:Hide()
     tinsert(UISpecialFrames, "SeekerLFGFrame")
 
