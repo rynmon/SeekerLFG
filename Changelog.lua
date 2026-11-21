@@ -10,6 +10,11 @@ ns.CHANGELOG = {
 		version = "0.9.6",
 		date = "21 November 2026",
 		sections = {
+			{ "Changed", {
+				{ "Colour-coded locations.", "Every member's zone in a tooltip is now coloured for the group's dungeon: green with the dungeon's icon when they're inside it, white on the same continent, red on another continent." },
+				{ "Your party's zones.", "Your party card reads each member's zone from the game's group roster, so it's known even when they're far away or in a dungeon." },
+				{ "Lookups in progress.", "Members whose zone is being looked up say looking up... instead of ?, and the tooltip explains that lookups run as you click or scroll." },
+			} },
 			{ "Fixed", {
 				{ "Full names for your party.", "Your party card and the listing preview showed only first names (\"Platinum\" instead of \"Platinum Andy\"). They now use the game's own name formatting, with surnames, as its party frames do." },
 			} },
