@@ -1158,6 +1158,12 @@ function ns.PumpLocate()
     if #queue == 0 or not (C_FriendList and C_FriendList.SendWho) then return end
     if GetTime() - lastLookup < WHO_GAP then return end
     if ns.IsWhoPageShown and ns.IsWhoPageShown() then return end -- the Who tab is yours
+    -- The game allows one search or /who per click: a click that opens or picks from a menu (the
+    -- category and activity menus search), or one on the List yourself page (posting), keeps it.
+    local okM, menuOpen = pcall(function() return Menu and Menu.GetManager and Menu.GetManager():GetOpenMenu() end)
+    if okM and menuOpen then return end
+    local win = _G.SeekerLFGFrame
+    if win and win.pages and win.pages.listing and win.pages.listing:IsShown() then return end
     if ns.whoUntil and GetTime() < ns.whoUntil then return end
     while #queue > 0 do
         local name = table.remove(queue, 1)

@@ -1967,7 +1967,9 @@ local function BuildFrame()
 
     CreateSideTabs(f)
 
-    -- Every click in the window is input, so it can run the next member lookup as well.
+    -- Every click in the window is input, so it can run the next member lookup as well, except on
+    -- what searches: the game allows one search or /who per click, and the search comes first.
+    for _, b in ipairs({ f.catDD, f.actDD, f.searchBtn }) do b.seekerPump = true end
     HookPump(f)
 
     f:HookScript("OnShow", function()
@@ -2286,5 +2288,4 @@ function SeekerLFG_BindingSearch()
         ns.db.categoryID = cats[1] and cats[1].id
     end
     if ns.DoSearch() then ns.Render() end
-    ns.PumpLocate()
 end

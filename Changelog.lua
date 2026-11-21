@@ -16,6 +16,7 @@ ns.CHANGELOG = {
 				{ "Lookups in progress.", "Members whose zone is being looked up say looking up... instead of ?, and the tooltip explains that lookups run as you click or scroll." },
 			} },
 			{ "Fixed", {
+				{ "Blocked searches.", "Picking a category could fail with an action blocked error, because a member lookup had used the click first. The game allows one search or /who per click, and lookups now leave the search menus, the Search button and the List yourself page alone." },
 				{ "Full names for your party.", "Your party card and the listing preview showed only first names (\"Platinum\" instead of \"Platinum Andy\"). They now use the game's own name formatting, with surnames, as its party frames do." },
 			} },
 		},
