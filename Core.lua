@@ -433,6 +433,35 @@ local function RelevantActivities(e)
 end
 ns.RelevantActivities = RelevantActivities
 
+-- Where someone standing in this zone is, for these dungeons: "in" (inside or at one of them),
+-- "near" (same continent), "far" (another continent), or nil when it can't be told. Also returns
+-- the dungeon's activity ID when they're in it.
+function ns.ZoneStatus(zone, activityIDs)
+    if not zone or zone == "" or not activityIDs or #activityIDs == 0 then return nil end
+    local function Bare(s) return ((s or ""):lower():gsub("^the ", ""):gsub("%s*%b()", "")) end
+    local here = Bare(zone)
+    for _, id in ipairs(activityIDs) do
+        local a = ns.GetActivity(id)
+        local dungeon = Bare(a and a.fullName or ns.GetActivityName(id))
+        local instance = Bare(ns.GetActivityInstanceName(id))
+        if (instance ~= "" and here == instance)
+            or (dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true))) then
+            return "in", id
+        end
+    end
+    local cont = ns.GetZoneContinent(zone)
+    if not cont then return nil end
+    local status
+    for _, id in ipairs(activityIDs) do
+        local dc = ns.GetActivityContinent(id)
+        if dc then
+            if dc == cont then return "near" end
+            status = "far"
+        end
+    end
+    return status
+end
+
 -- For a solo player: "near" (same continent as one of their dungeons), "far", or "unknown".
 function ns.EvaluateDistance(e)
     local p = e.leader
@@ -800,8 +829,35 @@ end
 -- Your party (or you, when you're listed alone), as a card: built from your group's own units, so
 -- it shows even when you're not listed or your search doesn't cover your listing, and is always
 -- current. The game's own result for your listing is replaced by it.
+-- Where a member of your group is: the game's group roster says, wherever they are (in another
+-- zone, a dungeon, out of range), as its raid frames show it. The map is a fallback.
+local function RosterZone(unit)
+    if not (GetRaidRosterInfo and GetNumGroupMembers) then return nil end
+    local idx = unit:match("^raid(%d+)$")
+    if idx then
+        local zone = select(7, GetRaidRosterInfo(tonumber(idx)))
+        return zone
+    end
+    local first = UnitName(unit)
+    local full = ns.UnitFullName and ns.UnitFullName(unit)
+    for i = 1, GetNumGroupMembers() do
+        local name, _, _, _, _, _, zone = GetRaidRosterInfo(i)
+        if name then
+            local bare = name:match("^[^-]+") or name
+            if bare == first or bare == full or (bare:match("^%S+") == first) then return zone end
+        end
+    end
+end
+
 local function UnitZone(unit)
-    if UnitIsUnit(unit, "player") then return GetRealZoneText and GetRealZoneText() end
+    if UnitIsUnit(unit, "player") then
+        local z = GetRealZoneText and GetRealZoneText()
+        if z and z ~= "" then return z end
+        z = GetZoneText and GetZoneText()
+        if z and z ~= "" then return z end
+    end
+    local ok, zone = pcall(RosterZone, unit)
+    if ok and zone and zone ~= "" and zone ~= UNKNOWN then return zone end
     local mapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit(unit)
     local info = mapID and C_Map.GetMapInfo(mapID)
     return info and info.name
@@ -1102,6 +1158,14 @@ end
 
 function ns.LocatePending()
     return #queue
+end
+
+-- Is this player waiting for a lookup (queued, or asked and not answered yet)?
+function ns.IsLocating(name)
+    local key = ShortKey(name)
+    if not key then return false end
+    if queued[key] then return true end
+    return asked[key] and GetTime() - asked[key] < 7 or false
 end
 
 -- A /who answer arrived. Remember it, and if it was one of Seeker's quiet lookups, send /who

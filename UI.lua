@@ -690,12 +690,26 @@ local function ExtrasText(e)
     return table.concat(extras, "  ")
 end
 
+-- The game's dungeon (or raid) entrance icon, as its world map shows it, for players inside one.
+local function DungeonIcon(activityID, size)
+    size = size or 14
+    local a = activityID and ns.GetActivity(activityID)
+    local atlas = (a and a.maxNumPlayers and a.maxNumPlayers > 5) and "Raid" or "Dungeon"
+    if HasAtlas(atlas) then return ("|A:%s:%d:%d|a"):format(atlas, size, size) end
+    if HasAtlas("Dungeon") then return ("|A:Dungeon:%d:%d|a"):format(size, size) end
+    return ("|TInterface\\Minimap\\Dungeon:%d:%d|t"):format(size, size)
+end
+ns.DungeonIcon = DungeonIcon
+
 -- Where the leader is, after the activity: red on the wrong continent, green at the dungeon.
 local function WhereText(e)
     local p = e.leader
     local zone = p and p.areaName
     if not zone or zone == "" then return "" end
-    if e.isSolo and e.inDungeon then return "|cff55ff55" .. zone .. "|r" end
+    if e.isSolo and e.inDungeon then
+        local _, id = ns.ZoneStatus(zone, ns.RelevantActivities(e))
+        return DungeonIcon(id, 12) .. " |cff55ff55" .. zone .. "|r"
+    end
     if e.isSolo and e.distance == "far" then
         return ("|cffff5555%s (%s)|r"):format(zone, e.continent or "?")
     end
@@ -943,22 +957,28 @@ local function ListingMembers(e)
     return list
 end
 
--- A member's location: their zone and continent, red when a solo player is on the wrong
--- continent for their dungeon, green when they're at it.
+-- A member's location, coloured by where they are for the listing's dungeon: green with the
+-- dungeon's icon when they're inside it, white on the same continent, red on another continent,
+-- grey when it can't be told. Unknown members say they're being looked up.
+local WHERE_COLOR = { ["in"] = "|cff55ff55", near = "|cffffffff", far = "|cffff5555" }
 local function MemberWhere(e, p)
     local zone, age = p.areaName, nil
     if not zone or zone == "" then
         zone, age = ns.GetKnownLocation(p.name)
-        if not zone then return "|cff808080?|r", true end
+        if not zone then
+            if ns.IsLocating and ns.IsLocating(p.name) then return "|cff808080looking up...|r", true end
+            return "|cff808080?|r", true
+        end
     end
+    local status, id = ns.ZoneStatus(zone, ns.RelevantActivities(e))
     local cont = ns.GetZoneContinent(zone)
-    local text = zone .. (cont and cont ~= zone and (", " .. cont) or "")
+    local text = zone .. (status ~= "in" and cont and cont ~= zone and (", " .. cont) or "")
+    text = (WHERE_COLOR[status] or "|cffd0d0d0") .. text .. "|r"
+    if status == "in" then text = DungeonIcon(id, 14) .. " " .. text end
     if age then
         text = text .. (" |cff808080(%s ago)|r"):format(FormatAge(age))
     end
-    if e.isSolo and e.inDungeon then return "|cff55ff55" .. text .. "|r" end
-    if e.isSolo and e.distance == "far" then return "|cffff5555" .. text .. "|r" end
-    return "|cffbbbbbb" .. text .. "|r"
+    return text
 end
 
 local function MemberRoles(e, p)
@@ -1005,6 +1025,9 @@ local function AddMembers(e)
         local where, isUnknown = MemberWhere(e, p)
         if isUnknown then unknown = unknown + 1 end
         GameTooltip:AddDoubleLine(left, where, 1, 1, 1, 1, 1, 1)
+    end
+    if unknown > 0 and not e.isSelf then
+        GameTooltip:AddLine("Unknown zones are looked up one at a time as you click or scroll in Seeker (the game allows one /who every few seconds).", 0.5, 0.5, 0.5, true)
     end
 end
 
