@@ -691,10 +691,10 @@ local function ExtrasText(e)
 end
 
 -- The game's dungeon (or raid) entrance icon, as its world map shows it, for players inside one.
-local function DungeonIcon(activityID, size)
+local function DungeonIcon(activityID, size, isRaid)
     size = size or 14
     local a = activityID and ns.GetActivity(activityID)
-    local atlas = (a and a.maxNumPlayers and a.maxNumPlayers > 5) and "Raid" or "Dungeon"
+    local atlas = (isRaid or (a and a.maxNumPlayers and a.maxNumPlayers > 5)) and "Raid" or "Dungeon"
     if HasAtlas(atlas) then return ("|A:%s:%d:%d|a"):format(atlas, size, size) end
     if HasAtlas("Dungeon") then return ("|A:Dungeon:%d:%d|a"):format(size, size) end
     return ("|TInterface\\Minimap\\Dungeon:%d:%d|t"):format(size, size)
@@ -957,10 +957,21 @@ local function ListingMembers(e)
     return list
 end
 
--- A member's location, coloured by where they are for the listing's dungeon: green with the
--- dungeon's icon when they're inside it, white on the same continent, red on another continent,
--- grey when it can't be told. Unknown members say they're being looked up.
+-- A member's location, coloured by where they are for the listing's dungeon: green when they're
+-- inside it, white on the same continent, red on another continent, grey when it can't be told.
+-- Your own party, when it isn't listed for anything, is coloured by where you are instead: green
+-- in your zone, white on your continent, red on another. Anyone inside a dungeon or raid gets its
+-- icon. Unknown members say they're being looked up.
 local WHERE_COLOR = { ["in"] = "|cff55ff55", near = "|cffffffff", far = "|cffff5555" }
+
+local function StatusFromMe(zone)
+    local mine = GetRealZoneText and GetRealZoneText()
+    if not mine or mine == "" then return nil end
+    if zone == mine then return "in" end
+    local a, b = ns.GetZoneContinent(zone), ns.GetZoneContinent(mine)
+    if not (a and b) then return nil end
+    return a == b and "near" or "far"
+end
 local function MemberWhere(e, p)
     local zone, age = p.areaName, nil
     if not zone or zone == "" then
@@ -970,11 +981,18 @@ local function MemberWhere(e, p)
             return "|cff808080?|r", true
         end
     end
-    local status, id = ns.ZoneStatus(zone, ns.RelevantActivities(e))
+    local acts = ns.RelevantActivities(e)
+    local status, id
+    if acts and #acts > 0 then
+        status, id = ns.ZoneStatus(zone, acts)
+    elseif e.isSelf then
+        status = StatusFromMe(zone)
+    end
+    local inst = ns.InstanceAt and ns.InstanceAt(zone)
     local cont = ns.GetZoneContinent(zone)
-    local text = zone .. (status ~= "in" and cont and cont ~= zone and (", " .. cont) or "")
+    local text = zone .. (not inst and cont and cont ~= zone and (", " .. cont) or "")
     text = (WHERE_COLOR[status] or "|cffd0d0d0") .. text .. "|r"
-    if status == "in" then text = DungeonIcon(id, 14) .. " " .. text end
+    if inst or id then text = DungeonIcon(id, 14, inst and inst.raid) .. " " .. text end
     if age then
         text = text .. (" |cff808080(%s ago)|r"):format(FormatAge(age))
     end

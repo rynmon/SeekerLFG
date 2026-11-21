@@ -413,10 +413,38 @@ local function BuildZoneMap()
     end
 end
 
+-- Every dungeon and raid, by its name in your language (from the game's own instance names),
+-- with its continent and whether it's a raid, so a zone can be told to be an instance even when
+-- nobody listed for it.
+local RAID_MAPS = { [249] = true, [509] = true, [531] = true, [409] = true, [469] = true, [309] = true, [533] = true }
+local function BareName(s) return ((s or ""):lower():gsub("^the ", ""):gsub("%s*%b()", "")) end
+local instances
+local function BuildInstances()
+    instances = {}
+    if not GetRealZoneText then return end
+    for mapID, key in pairs(INSTANCE_CONTINENT) do
+        local ok, name = pcall(GetRealZoneText, mapID)
+        if ok and name and name ~= "" then
+            instances[BareName(name)] = { name = name, continent = key, raid = RAID_MAPS[mapID] or false }
+        end
+    end
+end
+
+-- The instance this zone is, if it's a dungeon or raid: { name, continent key, raid }.
+function ns.InstanceAt(zone)
+    if not zone or zone == "" then return nil end
+    if not instances or not next(instances) then BuildInstances() end
+    return instances[BareName(zone)]
+end
+
 function ns.GetZoneContinent(areaName)
     if not areaName or areaName == "" then return nil end
     if not zoneContinent or not next(zoneContinent) then BuildZoneMap() end
-    return zoneContinent[areaName]
+    local c = zoneContinent[areaName]
+    if c then return c end
+    -- Inside a dungeon: the continent its entrance is on.
+    local inst = ns.InstanceAt(areaName)
+    return inst and ContinentName(inst.continent) or nil
 end
 
 -- Which of an entry's activities matter: the ones you picked (if it has any), else all of them.
