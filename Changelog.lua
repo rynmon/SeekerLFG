@@ -7,6 +7,18 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.5",
+		date = "20 November 2026",
+		sections = {
+			{ "Changed", {
+				{ "Search Again.", "The Search button is now the game's own Search Again button: the square button with the blue refresh arrow, as in its Looking for Group window." },
+				{ "Your party, always shown.", "When you're in a party (or listed), a card at the top shows your party: everyone's level, role and zone, and whether you're listed and for what, even when your search doesn't cover your listing. The leader can List group or Edit listing from it." },
+				{ "XP counts your party.", "With Count my level on, the XP colours now use your party's highest level, not just yours, since that's what a new member would group with." },
+				{ "Party on the bottom line.", "The status line says when you're in a party or raid, how big it is, and whether you lead it." },
+			} },
+		},
+	},
+	{
 		version = "0.9.4",
 		date = "20 November 2026",
 		sections = {

@@ -630,7 +630,8 @@ function ns.EvaluateXP(e)
     local level = e.maxLevel
     e.selfIsHighest = false
     if ns.db.filters.includeSelf and not e.isSelf then
-        local me = UnitLevel("player")
+        -- In a party, the level that counts is your party's highest (you join together).
+        local me = (ns.MyGroupMaxLevel and ns.MyGroupMaxLevel()) or UnitLevel("player")
         if me and me > 0 and (not level or me > level) then
             level = me
             e.selfIsHighest = true
@@ -796,8 +797,112 @@ local function SortEntries(a, b)
 end
 
 -- Returns filtered+sorted groups, players and the unfiltered totals.
+-- Your party (or you, when you're listed alone), as a card: built from your group's own units, so
+-- it shows even when you're not listed or your search doesn't cover your listing, and is always
+-- current. The game's own result for your listing is replaced by it.
+local function UnitZone(unit)
+    if UnitIsUnit(unit, "player") then return GetRealZoneText and GetRealZoneText() end
+    local mapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit(unit)
+    local info = mapID and C_Map.GetMapInfo(mapID)
+    return info and info.name
+end
+
+local ROLE_OF = { TANK = "TANK", HEALER = "HEALER", DAMAGER = "DAMAGER" }
+
+function ns.MyGroupUnits()
+    local units = { "player" }
+    if IsInRaid and IsInRaid() then
+        units = {}
+        for i = 1, GetNumGroupMembers() do units[#units + 1] = "raid" .. i end
+    elseif IsInGroup() then
+        for i = 1, GetNumSubgroupMembers() do units[#units + 1] = "party" .. i end
+    end
+    return units
+end
+
+-- The highest level in your party (just you when you're alone).
+function ns.MyGroupMaxLevel()
+    local best = 0
+    for _, unit in ipairs(ns.MyGroupUnits()) do
+        local l = UnitLevel(unit)
+        if l and l > best then best = l end
+    end
+    return best > 0 and best or nil
+end
+
+function ns.BuildMyGroupEntry()
+    local listing = ns.HasListing() and ns.GetListing()
+    if not (IsInGroup() or listing) then return nil end
+    local members, t, h, d = {}, 0, 0, 0
+    local maxL, minL, leader
+    for _, unit in ipairs(ns.MyGroupUnits()) do
+        if UnitExists(unit) then
+            local _, classFile = UnitClass(unit)
+            local role = ROLE_OF[UnitGroupRolesAssigned(unit)] or "NONE"
+            local name, realm = UnitName(unit)
+            local p = {
+                name = realm and realm ~= "" and (name .. "-" .. realm) or name,
+                level = UnitLevel(unit),
+                classFilename = classFile,
+                className = UnitClass(unit),
+                assignedRole = role,
+                areaName = UnitZone(unit),
+                isLeader = (IsInGroup() and UnitIsGroupLeader(unit)) or (not IsInGroup()),
+            }
+            if role == "TANK" then t = t + 1 elseif role == "HEALER" then h = h + 1 elseif role == "DAMAGER" then d = d + 1 end
+            if p.level and (not maxL or p.level > maxL) then maxL = p.level end
+            if p.level and (not minL or p.level < minL) then minL = p.level end
+            if p.isLeader then leader = p end
+            members[#members + 1] = p
+        end
+    end
+    leader = leader or members[1]
+    local activityIDs = listing and listing.activityIDs or {}
+    local maxPlayers = 0
+    for _, aid in ipairs(activityIDs) do
+        local a = ns.GetActivity(aid)
+        if a and a.maxNumPlayers and a.maxNumPlayers > maxPlayers then maxPlayers = a.maxNumPlayers end
+    end
+    if maxPlayers == 0 then maxPlayers = (IsInRaid and IsInRaid()) and 40 or 5 end
+    local e = {
+        id = -1,
+        isSelf = true,
+        isMyGroup = true,
+        listed = listing and true or false,
+        info = {
+            name = "", comment = listing and listing.comment or "", hasSelf = true,
+            generalPlaystyle = listing and listing.generalPlaystyle, newPlayerFriendly = listing and listing.newPlayerFriendly,
+            voiceMode = listing and listing.voiceMode,
+        },
+        members = members,
+        activityIDs = activityIDs,
+        age = 0,
+        leader = leader,
+        leaderName = leader and leader.name,
+        numMembers = #members,
+        isSolo = #members <= 1,
+        tanks = t, healers = h, dps = d,
+        maxPlayers = maxPlayers,
+        maxLevel = maxL, minLevel = minL,
+        friends = 0, guildmates = 0,
+    }
+    local okR, roles = pcall(function() return C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles() end)
+    e.roles = okR and roles or nil
+    return e
+end
+
 function ns.GetFiltered()
     local groups, players = ns.Collect()
+    -- Your party card replaces the game's result for your own listing.
+    local mine = ns.BuildMyGroupEntry()
+    if mine then
+        for _, list in ipairs({ groups, players }) do
+            for i = #list, 1, -1 do
+                if list[i].isSelf then table.remove(list, i) end
+            end
+        end
+        if mine.isSolo then table.insert(players, 1, mine) else table.insert(groups, 1, mine) end
+    end
     local f = ns.db.filters
     local fg, fp = {}, {}
     for _, e in ipairs(groups) do if Passes(e, f) then fg[#fg + 1] = e end end

@@ -561,7 +561,8 @@ local function CreatePane(parent, spec)
         end
         function row:UpdateActions()
             local show = self.canAct and self:IsMouseOver()
-            for _, b in ipairs(self.actions or {}) do b:SetShown(show) end
+            local own = self.item and self.item.isSelf
+            for _, b in ipairs(self.actions or {}) do b:SetShown(show and not (own and b == self.whisper)) end
             if self.corner then self.corner:SetShown(not show) end
             self:LayoutText(show)
         end
@@ -639,7 +640,15 @@ end
 
 -- Line 2's activity, coloured as the game colours it (your listing green, matches blue).
 local function ActivityName(e)
-    if e.isSelf then return "|cff80ff80" .. (LFG_SELF_LISTING or "Your listing") .. "|r" end
+    if e.isSelf then
+        local first = e.activityIDs and e.activityIDs[1]
+        local who = e.isMyGroup and not e.isSolo and "Your party" or (LFG_SELF_LISTING or "Your listing")
+        if not first then
+            return "|cff80ff80" .. who .. "|r  |cff999999(not listed)|r"
+        end
+        local what = ns.GetActivityName(first) .. (#e.activityIDs > 1 and ("|cff999999 +%d|r"):format(#e.activityIDs - 1) or "")
+        return "|cff80ff80" .. who .. ":|r " .. what
+    end
     local first = e.xpActivity or ns.RelevantActivities(e)[1] or e.activityIDs[1]
     if not first then return "?" end
     local name = ns.GetActivityName(first)
@@ -740,7 +749,7 @@ local function BuildGroupRow(row)
     row.join:SetScript("OnClick", function()
         if row.item then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-            ns.RequestToJoin(row.item)
+            if row.item.isSelf then ns.ShowTab("listing") else ns.RequestToJoin(row.item) end
         end
     end)
     row.join:SetMotionScriptsWhileDisabled(true)
@@ -762,11 +771,19 @@ local function PopulateGroup(row, e)
     row.line3:SetText(ExtrasText(e))
     row.level:SetText(e.maxLevel and tostring(e.maxLevel) or "?")
     if e.maxPlayers > 5 or e.numMembers > 5 then
-        row.corner:SetText(FormatAge(e.age)) -- the size is already in the role counts
+        row.corner:SetText(e.isSelf and "listed" or FormatAge(e.age)) -- the size is already in the role counts
     else
-        row.corner:SetText(("%d/%d  ·  %s"):format(e.numMembers, e.maxPlayers, FormatAge(e.age)))
+        row.corner:SetText(e.isSelf and ("%d/%d  ·  %s"):format(e.numMembers, e.maxPlayers, e.listed and "listed" or "not listed")
+            or ("%d/%d  ·  %s"):format(e.numMembers, e.maxPlayers, FormatAge(e.age)))
     end
-    row.canAct = not e.isSelf
+    if e.isSelf then
+        -- Your party: the leader can list it or edit its listing from here.
+        row.canAct = ns.CanEditListing()
+        row.join:SetText(e.listed and (LFG_LIST_EDIT or "Edit listing") or "List group")
+    else
+        row.canAct = true
+        row.join:SetText("Request to join")
+    end
     row:UpdateActions()
 
     -- More than five (a raid, or a big group): condensed by role, as the game's role-count display.
@@ -813,7 +830,10 @@ local function BuildPlayerRow(row)
     row.invite = RedButton(row, INVITE or "Invite", 70, 20, true)
     row.invite:SetPoint("BOTTOMRIGHT", -8, 6)
     row.invite:SetScript("OnClick", function()
-        if row.item and ns.CanInvite(row.item) then
+        if row.item and row.item.isSelf then
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+            ns.ShowTab("listing")
+        elseif row.item and ns.CanInvite(row.item) then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
             ns.InviteListed(row.item)
         end
@@ -846,10 +866,18 @@ local function PopulatePlayer(row, e)
     row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
     row.line3:SetText(ExtrasText(e))
     row.level:SetText(p.level and tostring(p.level) or "?")
-    row.corner:SetText(FormatAge(e.age))
-    row.canAct = not e.isSelf
+    row.corner:SetText(e.isSelf and "listed" or FormatAge(e.age))
+    if e.isSelf then
+        -- You, listed alone: edit your listing from here.
+        row.canAct = true
+        row.invite:SetText(LFG_LIST_EDIT or "Edit listing")
+        row.invite:SetEnabled(true)
+    else
+        row.canAct = true
+        row.invite:SetText(INVITE or "Invite")
+        row.invite:SetEnabled(ns.CanInvite(e))
+    end
     row:UpdateActions()
-    row.invite:SetEnabled(ns.CanInvite(e))
 
     -- Roles right-aligned, as the game lines them up.
     local shown = {}
@@ -1106,8 +1134,14 @@ function ns.EntryMenu(owner, e)
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle(e.leaderName or "?")
         if e.isSelf then
-            root:CreateButton(LFG_LIST_EDIT or "Edit your listing", function() ns.ShowTab("listing") end)
-            root:CreateButton(LFG_LIST_UNLIST or "Delist", function() ns.RemoveListing() end)
+            local canEdit = ns.CanEditListing()
+            local edit = root:CreateButton(e.listed == false and "List group" or (LFG_LIST_EDIT or "Edit your listing"),
+                function() ns.ShowTab("listing") end)
+            edit:SetEnabled(canEdit)
+            if e.listed ~= false then
+                local unlist = root:CreateButton(LFG_LIST_UNLIST or "Delist", function() ns.RemoveListing() end)
+                unlist:SetEnabled(canEdit)
+            end
             return
         end
         root:CreateButton(SEND_MESSAGE or "Whisper", function() ns.Whisper(e.leaderName) end)
@@ -1190,6 +1224,11 @@ function ns.StatusText(numGroups, numPlayers)
     end
     parts[#parts + 1] = ("%d %s, %d %s"):format(numGroups, numGroups == 1 and "group" or "groups",
         numPlayers, numPlayers == 1 and "player" or "players")
+    if IsInGroup() then
+        local n = GetNumGroupMembers()
+        parts[#parts + 1] = ("%s of %d%s"):format((IsInRaid and IsInRaid()) and "Raid" or "Party", n,
+            UnitIsGroupLeader("player") and " (you lead)" or "")
+    end
     local me = UnitLevel("player") or 0
     local selList = ns.SelectedActivities()
     local sel = selList and #selList == 1 and selList[1]
@@ -1741,16 +1780,36 @@ local function BuildFrame()
     end, ActivityDropdownText)
     f.actDD:SetPoint("LEFT", f.catDD, "RIGHT", 6, 0)
 
-    f.searchBtn = RedButton(browse, SEARCH or "Search", 86, 24)
-    f.searchBtn:SetPoint("LEFT", f.actDD, "RIGHT", 8, 0)
-    f.searchBtn:SetScript("OnClick", function()
+    -- Search Again, built exactly as the game's (its browse page's RefreshButton): a square button
+    -- with the blue refresh arrow, which nudges down while pressed.
+    local search = CreateFrame("Button", nil, browse)
+    search:SetSize(32, 32)
+    search:SetPoint("LEFT", f.actDD, "RIGHT", 9, 0)
+    search:SetNormalTexture("Interface\\Buttons\\UI-SquareButton-Up")
+    search:SetPushedTexture("Interface\\Buttons\\UI-SquareButton-Down")
+    search:SetDisabledTexture("Interface\\Buttons\\UI-SquareButton-Disabled")
+    search:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    search.Icon = search:CreateTexture(nil, "ARTWORK", nil, 5)
+    search.Icon:SetTexture("Interface\\Buttons\\UI-RefreshButton")
+    search.Icon:SetSize(16, 16)
+    search.Icon:SetPoint("CENTER", -1, 0)
+    search:SetScript("OnMouseDown", function(self) self.Icon:SetPoint("CENTER", self, "CENTER", -2, -1) end)
+    search:SetScript("OnMouseUp", function(self) self.Icon:SetPoint("CENTER", self, "CENTER", -1, 0) end)
+    search:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(LFG_LIST_SEARCH_AGAIN or "Search Again", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    search:SetScript("OnLeave", GameTooltip_Hide)
+    search:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         if ns.DoSearch() then ns.Render() end
     end)
+    f.searchBtn = search
 
     -- Delist, as the game's browse page offers while you're listed.
     f.delistBtn = RedButton(browse, LFG_LIST_UNLIST or "Delist", 76, 24)
-    f.delistBtn:SetPoint("LEFT", f.searchBtn, "RIGHT", 4, 0)
+    f.delistBtn:SetPoint("LEFT", f.searchBtn, "RIGHT", 6, 0)
     f.delistBtn:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         ns.RemoveListing()
