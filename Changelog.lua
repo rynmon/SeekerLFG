@@ -7,6 +7,15 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "0.9.6",
+		date = "21 November 2026",
+		sections = {
+			{ "Fixed", {
+				{ "Full names for your party.", "Your party card and the listing preview showed only first names (\"Platinum\" instead of \"Platinum Andy\"). They now use the game's own name formatting, with surnames, as its party frames do." },
+			} },
+		},
+	},
+	{
 		version = "0.9.5",
 		date = "20 November 2026",
 		sections = {

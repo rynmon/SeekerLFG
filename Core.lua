@@ -807,6 +807,21 @@ local function UnitZone(unit)
     return info and info.name
 end
 
+-- A unit's name as the game's own frames show it. In Forever a character's name is a first name
+-- and a surname, and UnitName returns them separately (where retail returns name and realm), so
+-- the game's own formatter is used, which joins them the way the party frames do.
+function ns.UnitFullName(unit)
+    if NameUtil and NameUtil.FormatUnitNameForDisplay then
+        local ok, name = pcall(NameUtil.FormatUnitNameForDisplay, unit, true)
+        if ok and name and name ~= "" then return name end
+    end
+    if GetUnitName then
+        local ok, name = pcall(GetUnitName, unit, true)
+        if ok and name and name ~= "" then return name end
+    end
+    return (UnitName(unit))
+end
+
 local ROLE_OF = { TANK = "TANK", HEALER = "HEALER", DAMAGER = "DAMAGER" }
 
 function ns.MyGroupUnits()
@@ -839,9 +854,8 @@ function ns.BuildMyGroupEntry()
         if UnitExists(unit) then
             local _, classFile = UnitClass(unit)
             local role = ROLE_OF[UnitGroupRolesAssigned(unit)] or "NONE"
-            local name, realm = UnitName(unit)
             local p = {
-                name = realm and realm ~= "" and (name .. "-" .. realm) or name,
+                name = ns.UnitFullName(unit),
                 level = UnitLevel(unit),
                 classFilename = classFile,
                 className = UnitClass(unit),

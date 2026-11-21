@@ -583,7 +583,7 @@ UpdatePreview = function()
     else
         c.icon:Hide()
     end
-    c.name:SetText(UnitName("player") or "?")
+    c.name:SetText(ns.UnitFullName("player") or "?")
     c.name:SetTextColor(U.ClassColor(classFile))
     c.level:SetText(tostring(UnitLevel("player") or ""))
 
