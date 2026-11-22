@@ -427,11 +427,40 @@ local function IconButton(parent, texture, size, tip, onClick)
     return b
 end
 
+-- A search asked for from a menu. The game can block a search made from inside a menu, so a
+-- pick only marks one as waiting (Search Again lights up), and the next click in the window, or
+-- Search Again itself, runs it.
+function ns.RequestSearch()
+    ns.pendingSearch = true
+    local win = _G.SeekerLFGFrame
+    if win and win.searchBtn then win.searchBtn:LockHighlight() end
+    if ns.Render then ns.Render() end
+end
+
+function ns.ClearPendingSearch()
+    ns.pendingSearch = false
+    local win = _G.SeekerLFGFrame
+    if win and win.searchBtn then win.searchBtn:UnlockHighlight() end
+end
+
+-- From a click or key press: run the waiting search, if there is one. True if it ran.
+function ns.RunPendingSearch()
+    if not ns.pendingSearch then return false end
+    local okM, menuOpen = pcall(function() return Menu and Menu.GetManager and Menu.GetManager():GetOpenMenu() end)
+    if okM and menuOpen then return false end
+    ns.ClearPendingSearch()
+    if ns.DoSearch() then ns.Render() end
+    return true
+end
+
 -- Any click in Seeker is input, which a /who needs, so each one can run the next member lookup.
 local function HookPump(frame)
     if frame.IsMouseEnabled and frame:IsMouseEnabled() and not frame.seekerPump then
         frame.seekerPump = true
-        frame:HookScript("OnMouseDown", function() if ns.PumpLocate then ns.PumpLocate() end end)
+        frame:HookScript("OnMouseDown", function()
+            if ns.RunPendingSearch and ns.RunPendingSearch() then return end
+            if ns.PumpLocate then ns.PumpLocate() end
+        end)
     end
     for _, child in ipairs({ frame:GetChildren() }) do HookPump(child) end
 end
@@ -1254,7 +1283,9 @@ end
 -- your XP; and your Search again key, if you've bound one.
 function ns.StatusText(numGroups, numPlayers)
     local parts = {}
-    if ns.searching then
+    if ns.pendingSearch then
+        parts[#parts + 1] = "|cffffd100Click to search|r"
+    elseif ns.searching then
         parts[#parts + 1] = SEARCHING or "Searching..."
     elseif ns.lastResults then
         parts[#parts + 1] = ("Searched %s ago"):format(FormatAge(GetTime() - ns.lastResults))
@@ -1733,7 +1764,7 @@ local function BuildFrame()
             Radio(root, LFG_SELF_LISTING or "Your listing", function() return db.searchSelf end, function()
                 db.searchSelf = true
                 RefreshDropdowns()
-                if ns.DoSearch() then ns.Render() end
+                ns.RequestSearch()
             end)
         end
         if #cats == 0 and not ns.HasListing() then
@@ -1744,7 +1775,7 @@ local function BuildFrame()
                 db.categoryID, db.searchSelf = c.id, false
                 ns.ClearActivitySelection()
                 RefreshDropdowns()
-                if ns.DoSearch() then ns.Render() end
+                ns.RequestSearch()
             end)
         end
     end, function()

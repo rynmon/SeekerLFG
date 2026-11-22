@@ -563,6 +563,7 @@ function ns.DoSearch()
         ns.Print("Pick a category first.")
         return false
     end
+    if ns.ClearPendingSearch then ns.ClearPendingSearch() end
     local ok, err = pcall(LFG.Search, cat, 0, 0, nil, false, nil, acts)
     if not ok then
         ns.Print("Search failed: " .. tostring(err))
