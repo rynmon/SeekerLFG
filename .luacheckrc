@@ -188,7 +188,6 @@ read_globals = {
     "SAVE",
     "SEARCH",
     "SEARCHING",
-    "SeekerLFGDB",
     "SEND_MESSAGE",
     "SendChatMessage",
     "SetCVar",
