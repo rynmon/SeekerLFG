@@ -3,6 +3,7 @@
 -- activities, playstyle (required), voice chat, description, roles, new player friendly,
 -- then List / Update / Delist. Only the group leader can create or change a group's listing.
 local ADDON, ns = ...
+local T = ns.L -- translations (Locale.lua); L is this page's state
 
 local L = {
     categoryID = nil,
@@ -50,10 +51,10 @@ local VOICE_LABELS
 local function VoiceLabels()
     if not VOICE_LABELS and HasVoiceModes() then
         VOICE_LABELS = {
-            [Enum.LFGEntryVoiceMode.None] = VOICE_CHAT_MODE_NONE or "None",
-            [Enum.LFGEntryVoiceMode.Legacy] = VOICE_CHAT_MODE_LEGACY or "In-game voice",
-            [Enum.LFGEntryVoiceMode.Discord] = VOICE_CHAT_MODE_DISCORD or "Discord",
-            [Enum.LFGEntryVoiceMode.Custom] = VOICE_CHAT_MODE_CUSTOM or "Other",
+            [Enum.LFGEntryVoiceMode.None] = VOICE_CHAT_MODE_NONE or T["None"],
+            [Enum.LFGEntryVoiceMode.Legacy] = VOICE_CHAT_MODE_LEGACY or T["In-game voice"],
+            [Enum.LFGEntryVoiceMode.Discord] = VOICE_CHAT_MODE_DISCORD or T["Discord"],
+            [Enum.LFGEntryVoiceMode.Custom] = VOICE_CHAT_MODE_CUSTOM or T["Other"],
         }
     end
     return VOICE_LABELS or {}
@@ -97,21 +98,25 @@ local function ResetActivities()
     end
 end
 
+-- Which headings start folded. By XP: "No XP for you" and "Other", unless your listing already
+-- includes some of them. By the game's groups: none, as the game shows them all open.
+function L.ResetCollapsed()
+    wipe(L.collapsed)
+    if not L.categoryID or ns.db.activityGrouping == "game" then return end
+    local sections = ns.ActivitySections(L.categoryID)
+    for _, key in ipairs({ "none", "other" }) do
+        local anyPicked = false
+        for _, aid in ipairs(sections[key] or {}) do
+            if L.selected[aid] then anyPicked = true break end
+        end
+        L.collapsed[key] = not anyPicked
+    end
+end
+
 function L.SetCategory(id)
     L.categoryID = id
-    wipe(L.collapsed)
     ResetActivities()
-    -- "No XP for you" starts folded away, unless your listing already includes some of it.
-    if id then
-        local sections = ns.ActivitySections(id)
-        for _, key in ipairs({ "none", "other" }) do
-            local anyPicked = false
-            for _, aid in ipairs(sections[key] or {}) do
-                if L.selected[aid] then anyPicked = true break end
-            end
-            L.collapsed[key] = not anyPicked
-        end
-    end
+    L.ResetCollapsed()
 end
 
 local function LoadRoles()
@@ -163,22 +168,22 @@ end
 function L.PostBlocker()
     local listed = ns.HasListing()
     if not ns.CanEditListing() then
-        return listed and (LFG_LIST_ONLY_LEADER_UPDATE or "Only your group leader can change the listing.")
-            or (LFG_LIST_ONLY_LEADER_CREATE or "Only your group leader can list the group.")
+        return listed and (LFG_LIST_ONLY_LEADER_UPDATE or T["Only your group leader can change the listing."])
+            or (LFG_LIST_ONLY_LEADER_CREATE or T["Only your group leader can list the group."])
     end
     local count = #SelectedList()
     if count > MaxActivities() then
-        return LFG_LIST_TOO_MANY_ACTIVITIES_SELECTED or "Too many activities selected."
+        return LFG_LIST_TOO_MANY_ACTIVITIES_SELECTED or T["Too many activities selected."]
     end
     if HasPlaystyles() and not L.playstyle and not listed then
-        return GROUP_FINDER_PLAYSTYLE_REQUIRED or "Pick a playstyle."
+        return GROUP_FINDER_PLAYSTYLE_REQUIRED or T["Pick a playstyle."]
     end
     if not L.dirty or (not listed and count == 0) then
         return "" -- nothing to post yet; no error to show
     end
     local info = ns.GetCategoryInfo(L.categoryID)
     if info and info.autoChooseActivity and CommentText() == "" then
-        return DESCRIPTION_OF_YOUR_GROUP_MANDATORY or "Add a description of your group."
+        return DESCRIPTION_OF_YOUR_GROUP_MANDATORY or T["Add a description of your group."]
     end
     if IsInGroup(LE_PARTY_CATEGORY_HOME) then
         local members = GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)
@@ -195,7 +200,7 @@ function L.PostBlocker()
             end
         end
         if smallest > 0 then
-            return (LFG_LIST_TOO_MANY_FOR_ACTIVITY or "Your group is too big for an activity (max %d)."):format(smallest)
+            return (LFG_LIST_TOO_MANY_FOR_ACTIVITY or T["Your group is too big for an activity (max %d)."]):format(smallest)
         end
     end
     return nil
@@ -238,7 +243,7 @@ function L.Post()
     end
     if ok == false then
         ns.pendingListingUpdate = false
-        ns.Print("Couldn't post the listing: " .. tostring(err))
+        ns.Print(T["Couldn't post the listing: "] .. tostring(err))
         return
     end
     if ok then SaveRoles() end
@@ -250,7 +255,7 @@ function ns.RemoveListing()
     local ok, err = pcall(LFG.RemoveListing)
     if not ok then
         ns.pendingListingUpdate = false
-        ns.Print("Couldn't delist: " .. tostring(err))
+        ns.Print(T["Couldn't delist: "] .. tostring(err))
     end
 end
 
@@ -258,9 +263,10 @@ end
 local function FetchSavedInstances()
     wipe(L.savedInstances)
     for i = 1, (GetNumSavedInstances and GetNumSavedInstances() or 0) do
-        local _, _, _, difficultyID, _, _, _, _, _, _, total, done, _, mapID = GetSavedInstanceInfo(i)
+        local _, _, _, difficultyID, locked, _, _, _, _, _, total, done, _, mapID = GetSavedInstanceInfo(i)
         L.savedInstances[i] = {
             mapID = mapID, difficultyID = difficultyID, total = total, done = done,
+            locked = locked and true or false, -- an expired lockout stays listed until reset, unlocked
             redirected = C_RaidLocks and C_RaidLocks.GetRedirectedDifficultyID and C_RaidLocks.GetRedirectedDifficultyID(mapID, difficultyID),
         }
     end
@@ -270,19 +276,21 @@ local function InstanceLock(activityID)
     local a = ns.GetActivity(activityID)
     if not (a and a.mapID and a.difficultyID) then return end
     for _, inst in pairs(L.savedInstances) do
-        if inst.mapID == a.mapID and inst.done and inst.done > 0 and inst.total and inst.total > 0 then
-            if inst.difficultyID == a.difficultyID or inst.redirected == a.redirectedDifficultyID then
+        if inst.locked and inst.mapID == a.mapID and inst.done and inst.done > 0 and inst.total and inst.total > 0 then
+            if inst.difficultyID == a.difficultyID
+                or (inst.redirected ~= nil and inst.redirected == a.redirectedDifficultyID) then
                 return inst.done, inst.total
             end
         end
     end
 end
 
--- What a dungeon would give you in XP at your level (the 12-level rule): "safe", "partial", "none".
+-- What a dungeon would give you in XP (the 12-level rule): "safe", "partial", "none". Judged by
+-- your party's highest level, as Browse judges it, since that's who'd be running it.
 XPFor = function(activityID)
     local lo, hi = ns.GetActivityRange(activityID)
     if not lo then return nil end
-    local me = UnitLevel("player") or 0
+    local me = ns.MyXPLevel()
     if me <= lo + ns.XP_GAP then return "safe" end
     if me <= hi + ns.XP_GAP then return "partial" end
     return "none"
@@ -303,11 +311,13 @@ function L.Warnings()
     table.sort(saved)
     local lines = {}
     local function List(t)
-        if #t > 3 then return table.concat(t, ", ", 1, 3) .. (" and %d more"):format(#t - 3) end
+        if #t > 3 then return table.concat(t, ", ", 1, 3) .. (T[" and %d more"]):format(#t - 3) end
         return table.concat(t, ", ")
     end
-    if #noXP > 0 then lines[#lines + 1] = "No XP for you in: " .. List(noXP) end
-    if #saved > 0 then lines[#lines + 1] = "You're saved to: " .. List(saved) end
+    if #noXP > 0 then
+        lines[#lines + 1] = (IsInGroup() and T["No XP for your party in: "] or T["No XP for you in: "]) .. List(noXP)
+    end
+    if #saved > 0 then lines[#lines + 1] = T["You're saved to: "] .. List(saved) end
     return table.concat(lines, ".  ")
 end
 
@@ -324,6 +334,28 @@ local rows, list, scroll = {}, {}, 0
 local function Flatten()
     wipe(list)
     if not L.categoryID then return end
+    if ns.db.activityGrouping == "game" then
+        -- The game's own activity groups, as its listing page: free-standing activities first,
+        -- then each group under a heading that ticks all of it. Each activity keeps its XP
+        -- section's colour for its level range.
+        local secByKey = {}
+        for _, sec in ipairs(ns.ACTIVITY_SECTIONS) do secByKey[sec.key] = sec end
+        for _, g in ipairs(ns.GetGroupedActivities(L.categoryID)) do
+            local function Item(id, indent)
+                return { activityID = id, indent = indent, section = secByKey[ns.ActivityXPClass(id)] }
+            end
+            if g.groupID == 0 or not g.name then
+                for _, id in ipairs(g.activities) do list[#list + 1] = Item(id, 0) end
+            else
+                local key = "g" .. g.groupID
+                list[#list + 1] = { group = { groupID = key, name = g.name, activities = g.activities }, collapsible = true }
+                if not L.collapsed[key] then
+                    for _, id in ipairs(g.activities) do list[#list + 1] = Item(id, 1) end
+                end
+            end
+        end
+        return
+    end
     local sections = ns.ActivitySections(L.categoryID)
     for _, sec in ipairs(ns.ACTIVITY_SECTIONS) do
         local ids = sections[sec.key]
@@ -410,12 +442,12 @@ local function MakeRow(parent, i)
         GameTooltip:SetText(a and a.fullName or ns.GetActivityName(item.activityID), 1, 1, 1)
         local lo, hi = ns.GetActivityRange(item.activityID)
         if lo then
-            GameTooltip:AddLine(("Mobs ~%d-%d. Full XP while nobody in the group is above %d."):format(lo, hi, lo + ns.XP_GAP),
+            GameTooltip:AddLine((T["Mobs ~%d-%d. Full XP while nobody in the group is above %d."]):format(lo, hi, lo + ns.XP_GAP),
                 0.8, 0.8, 0.8, true)
         end
         local done, total = InstanceLock(item.activityID)
         if done then
-            GameTooltip:AddLine((INSTANCE_LOCK_WARNING_PREVIOUSLY_SAVED or "You're saved to this instance: %d/%d bosses."):format(done, total),
+            GameTooltip:AddLine((INSTANCE_LOCK_WARNING_PREVIOUSLY_SAVED or T["You're saved to this instance: %d/%d bosses."]):format(done, total),
                 1, 0.3, 0.3, true)
         end
         GameTooltip:Show()
@@ -492,6 +524,10 @@ end
 local commentHome
 local function BorrowComment(holder)
     local sf = _G.LFGListingComment
+    if not sf and ns.LoadNativeFinder and ns.LoadNativeFinder() then
+        sf = _G.LFGListingComment -- the game's group finder, loaded just now
+        if ns.TryAttachLauncher then ns.TryAttachLauncher() end
+    end
     if not sf then return false end
     if not commentHome then commentHome = sf:GetParent() end
     sf:SetParent(holder)
@@ -504,9 +540,9 @@ local function BorrowComment(holder)
         sf.EditBox:SetEnabled(enabled and ns.CanEditListing())
         if sf.EditBox.Instructions then
             local info = ns.GetCategoryInfo(L.categoryID)
-            sf.EditBox.Instructions:SetText(not enabled and (LFG_AUTHENTICATOR_DESCRIPTION_BOX or "Requires an authenticator.")
-                or (info and info.autoChooseActivity) and (DESCRIPTION_OF_YOUR_GROUP_MANDATORY or "Describe your group (required)")
-                or (DESCRIPTION_OF_YOUR_GROUP or "Describe your group (optional)"))
+            sf.EditBox.Instructions:SetText(not enabled and (LFG_AUTHENTICATOR_DESCRIPTION_BOX or T["Requires an authenticator."])
+                or (info and info.autoChooseActivity) and (DESCRIPTION_OF_YOUR_GROUP_MANDATORY or T["Describe your group (required)"])
+                or (DESCRIPTION_OF_YOUR_GROUP or T["Describe your group (optional)"]))
         end
         if not sf.groupScopeHooked then
             sf.groupScopeHooked = true
@@ -555,7 +591,7 @@ BuildPreview = function(parent)
     c.line3:SetPoint("TOPLEFT", c.sub, "BOTTOMLEFT", 0, -2)
     c.line3:SetJustifyH("LEFT")
     c.level = U.Text(c, "GameFontNormalLarge")
-    c.level:SetPoint("RIGHT", c, "RIGHT", -84, 0)
+    c.level:SetPoint("LEFT", c.name, "RIGHT", 8, 0) -- just after the name, as on Browse's cards
     c.roles = {}
     for i = 1, 3 do
         local t = c:CreateTexture(nil, "ARTWORK")
@@ -594,9 +630,9 @@ UpdatePreview = function()
     if #ids > 0 then
         what = ns.GetActivityName(ids[1]) .. (#ids > 1 and ("|cff999999 +%d|r"):format(#ids - 1) or "")
     elseif L.categoryID then
-        what = "|cff808080Pick what you're listing for|r"
+        what = T["|cff808080Pick what you're listing for|r"]
     else
-        what = "|cff808080Pick a category|r"
+        what = T["|cff808080Pick a category|r"]
     end
     local zone = GetRealZoneText and GetRealZoneText() or ""
     c.sub:SetText(what .. (zone ~= "" and ("  |cffd0d0d0" .. zone .. "|r") or ""))
@@ -607,7 +643,7 @@ UpdatePreview = function()
         extras[#extras + 1] = U.HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a" or "|cff80ff80New|r"
     end
     if HasVoiceModes() and L.voiceMode == Enum.LFGEntryVoiceMode.Discord then
-        extras[#extras + 1] = "|cff8c9eff" .. (VOICE_CHAT_MODE_DISCORD or "Discord") .. "|r"
+        extras[#extras + 1] = "|cff8c9eff" .. (VOICE_CHAT_MODE_DISCORD or T["Discord"]) .. "|r"
     end
     c.line3:SetText(table.concat(extras, "  "))
 
@@ -615,7 +651,7 @@ UpdatePreview = function()
     local inGroup = IsInGroup(LE_PARTY_CATEGORY_HOME)
     c.group:SetShown(inGroup)
     if inGroup then
-        c.group:SetText(("Group of %d"):format(GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)))
+        c.group:SetText((T["Group of %d"]):format(GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)))
         for i = 1, 3 do c.roles[i]:Hide() end
     else
         local shown = {}
@@ -649,14 +685,14 @@ function ns.RefreshListingPage(filtersChanged)
         for id in pairs(keep) do if L.selected[id] ~= nil then L.selected[id] = true end end
     end
 
-    page.title:SetText(listed and (LFG_LIST_EDIT or "Your listing") or (LFG_LIST_TAB_1 or "List yourself"))
+    page.title:SetText(listed and (LFG_LIST_EDIT or T["Your listing"]) or (LFG_LIST_TAB_1 or T["List yourself"]))
     if listed then
         local entry = ns.GetListing()
         local n = entry and #entry.activityIDs or 0
-        page.subtitle:SetText(("|cff80ff80Listed|r for %s"):format(n == 1 and ns.GetActivityName(entry.activityIDs[1])
-            or (LFGBROWSE_ACTIVITY_COUNT or "%d activities"):format(n)))
+        page.subtitle:SetText((T["|cff80ff80Listed|r for %s"]):format(n == 1 and ns.GetActivityName(entry.activityIDs[1])
+            or (LFGBROWSE_ACTIVITY_COUNT or T["%d activities"]):format(n)))
     else
-        page.subtitle:SetText("Not listed")
+        page.subtitle:SetText(T["Not listed"])
     end
 
     -- Which view: locked (not the leader), categories, or activities.
@@ -665,8 +701,8 @@ function ns.RefreshListingPage(filtersChanged)
     lockedView:Hide()
     if not canEdit then
         lockedView:Show()
-        lockedView.message:SetText(listed and (LFG_LIST_ONLY_LEADER_UPDATE or "Only your group leader can change the listing.")
-            or (LFG_LIST_ONLY_LEADER_CREATE or "Only your group leader can list the group."))
+        lockedView.message:SetText(listed and (LFG_LIST_ONLY_LEADER_UPDATE or T["Only your group leader can change the listing."])
+            or (LFG_LIST_ONLY_LEADER_CREATE or T["Only your group leader can list the group."]))
         local lines = {}
         local entry = ns.GetListing()
         if entry then
@@ -697,15 +733,15 @@ function ns.RefreshListingPage(filtersChanged)
             -- What's in it for you: how many activities at your level, or that it's free-form.
             local info = ns.GetCategoryInfo(id)
             if info and info.autoChooseActivity then
-                b.sub:SetText("Anything else: you describe it")
+                b.sub:SetText(T["Anything else: you describe it"])
             else
                 local acts = ns.GetFilteredActivities(id)
                 local full = 0
                 for _, aid in ipairs(acts) do
                     if ns.ActivityXPClass(aid) == "full" then full = full + 1 end
                 end
-                b.sub:SetText(("%d at your level%s"):format(#acts,
-                    full > 0 and ("  |cff55ff55%d with full XP|r"):format(full) or ""))
+                b.sub:SetText((T["%d at your level%s"]):format(#acts,
+                    full > 0 and (T["  |cff55ff55%d with full XP|r"]):format(full) or ""))
             end
             local atlas = CATEGORY_ATLAS[id] or "groupfinder-button-questing"
             if U.HasAtlas(atlas) then b.art:SetAtlas(atlas) b.art:Show() else b.art:Hide() end
@@ -726,6 +762,9 @@ function ns.RefreshListingPage(filtersChanged)
     details.playstyleRow:SetShown(HasPlaystyles())
     details.voiceRow:SetShown(HasVoiceModes())
     if details.playstyleDD.Refresh then details.playstyleDD:Refresh() end
+    -- The game sends a playstyle only when a listing is made, never with an update: once you're
+    -- listed it can't change, so the choice is locked (the tooltip says how to change it).
+    if details.playstyleDD.SetEnabled then details.playstyleDD:SetEnabled(canEdit and not listed) end
     if details.voiceDD.Refresh then details.voiceDD:Refresh() end
     local inGroup = IsInGroup(LE_PARTY_CATEGORY_HOME)
     details.soloRoles:SetShown(not inGroup)
@@ -742,11 +781,11 @@ function ns.RefreshListingPage(filtersChanged)
     -- Buttons (Post / Back-or-Delist), as the game words them.
     local post = page.post
     if listed then
-        post:SetText(LFG_POST_GROUP_UPDATE or "Update")
+        post:SetText(LFG_POST_GROUP_UPDATE or T["Update"])
     elseif inGroup then
-        post:SetText(LFG_POST_GROUP_PARTY or "List group")
+        post:SetText(LFG_POST_GROUP_PARTY or T["List group"])
     else
-        post:SetText(LFG_POST_GROUP_SOLO or "List self")
+        post:SetText(LFG_POST_GROUP_SOLO or T["List self"])
     end
     local blocker = L.PostBlocker()
     post:SetEnabled(blocker == nil)
@@ -758,7 +797,7 @@ function ns.RefreshListingPage(filtersChanged)
         page.error:SetTextColor(1, 0.82, 0.2)
         page.error:SetText(L.Warnings())
     end
-    page.back:SetText(listed and (LFG_LIST_UNLIST or "Delist") or (BACK or "Back"))
+    page.back:SetText(listed and (LFG_LIST_UNLIST or T["Delist"]) or (BACK or T["Back"]))
     page.back:SetEnabled(listed and canEdit or (not listed and L.categoryID ~= nil))
 end
 
@@ -774,7 +813,7 @@ function ns.BuildListingPage(f, p)
 
     page.title = U.Text(page, "GameFontNormalLarge")
     page.title:SetPoint("TOPLEFT", 72, -34)
-    page.subtitle = U.Text(page, "GameFontHighlight", U.SIZE_LABEL)
+    page.subtitle = U.Text(page, "GameFontHighlight")
     page.subtitle:SetPoint("LEFT", page.title, "RIGHT", 14, -1)
 
     local LEFT_W = 468
@@ -790,9 +829,9 @@ function ns.BuildListingPage(f, p)
     -- Categories
     catView = CreateFrame("Frame", nil, left)
     catView:SetAllPoints()
-    local catTitle = U.Text(catView, "GameFontNormalLarge", 16)
+    local catTitle = U.Text(catView, "GameFontNormalLarge")
     catTitle:SetPoint("TOP", 0, -18)
-    catTitle:SetText("What are you looking for?")
+    catTitle:SetText(T["What are you looking for?"])
     catView.buttons = {}
     -- Built as the game's LFGListingCategoryTemplate: the button is the frame art's own size
     -- (groupfinder-button-cover), with the category's picture inset 5,-8,-5,5 inside it, and the
@@ -838,9 +877,9 @@ function ns.BuildListingPage(f, p)
     actView.header = U.HeaderBar(actView)
     actView.header:SetPoint("TOPLEFT", 4, -4)
     actView.header:SetPoint("TOPRIGHT", -4, -4)
-    actView.header.text = U.Text(actView.header, "GameFontNormal", U.SIZE_HEAD)
+    actView.header.text = U.Text(actView.header, "GameFontNormal")
     actView.header.text:SetPoint("LEFT", 12, -4)
-    actView.change = U.RedButton(actView.header, "Change category", 120, 20, true)
+    actView.change = U.RedButton(actView.header, T["Change category"], 120, 20, true)
     actView.change:SetPoint("RIGHT", -10, -4)
     actView.change:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
@@ -848,11 +887,11 @@ function ns.BuildListingPage(f, p)
         ns.RefreshListingPage()
     end)
 
-    actView.allLevels = U.Check(actView, LFG_LIST_IGNORE_SUGGESTED_LEVEL or "Show all level ranges",
+    actView.allLevels = U.Check(actView, LFG_LIST_IGNORE_SUGGESTED_LEVEL or T["Show all level ranges"],
         function() return ns.IgnoringLevelRanges() end,
         function(v) ns.SetIgnoreLevelRanges(v) end,
-        LFG_LIST_IGNORE_SUGGESTED_LEVEL or "Show all level ranges",
-        "Also list activities outside your level's suggested range. Shared with the game's own window.")
+        LFG_LIST_IGNORE_SUGGESTED_LEVEL or T["Show all level ranges"],
+        T["Also list activities outside your level's suggested range. Shared with the game's own window."])
     actView.allLevels:SetPoint("BOTTOMLEFT", 10, 6)
 
     local area = CreateFrame("Frame", nil, actView)
@@ -889,13 +928,13 @@ function ns.BuildListingPage(f, p)
     -- Locked (not the leader)
     lockedView = CreateFrame("Frame", nil, left)
     lockedView:SetAllPoints()
-    lockedView.message = U.Text(lockedView, "GameFontNormalLarge", 16)
+    lockedView.message = U.Text(lockedView, "GameFontNormalLarge")
     lockedView.message:SetPoint("TOP", 0, -40)
     lockedView.message:SetWidth(LEFT_W - 40)
-    local listedFor = U.Text(lockedView, "GameFontNormal", U.SIZE_LABEL + 1)
+    local listedFor = U.Text(lockedView, "GameFontNormal")
     listedFor:SetPoint("TOPLEFT", 40, -90)
-    listedFor:SetText(LFG_LIST_MY_ACTIVITY_LIST_HEADER or "Listed for:")
-    lockedView.activities = U.Text(lockedView, "GameFontHighlight", U.SIZE_LABEL + 1)
+    listedFor:SetText(LFG_LIST_MY_ACTIVITY_LIST_HEADER or T["Listed for:"])
+    lockedView.activities = U.Text(lockedView, "GameFontHighlight")
     lockedView.activities:SetPoint("TOPLEFT", listedFor, "BOTTOMLEFT", 12, -8)
     lockedView.activities:SetJustifyH("LEFT")
 
@@ -904,7 +943,7 @@ function ns.BuildListingPage(f, p)
     details:SetAllPoints()
     local DX, LBL_W = 14, 100
     local function Label(text, y, parent)
-        local fs = U.Text(parent or details, "GameFontNormal", U.SIZE_LABEL + 1)
+        local fs = U.Text(parent or details, "GameFontNormal")
         fs:SetPoint("TOPLEFT", DX, y)
         fs:SetText(text)
         return fs
@@ -914,7 +953,7 @@ function ns.BuildListingPage(f, p)
     details.playstyleRow:SetPoint("TOPLEFT", 0, 0)
     details.playstyleRow:SetPoint("TOPRIGHT", 0, 0)
     details.playstyleRow:SetHeight(44)
-    Label(PLAYSTYLE or "Playstyle", -20, details.playstyleRow)
+    Label(PLAYSTYLE or T["Playstyle"], -20, details.playstyleRow)
     details.playstyleDD = U.Dropdown(details.playstyleRow, 220, function(root)
         if not HasPlaystyles() then return end
         for _, key in ipairs({ "Learning", "FunRelaxed", "FunSerious", "Expert" }) do
@@ -928,18 +967,27 @@ function ns.BuildListingPage(f, p)
         end
     end, function()
         if L.playstyle and HasPlaystyles() then return GetGeneralPlaystyleString(L.playstyle) end
-        return "|cff999999" .. (GROUP_FINDER_PLAYSTYLE_REQUIRED or "Pick a playstyle") .. "|r"
+        return "|cff999999" .. (GROUP_FINDER_PLAYSTYLE_REQUIRED or T["Pick a playstyle"]) .. "|r"
     end)
     details.playstyleDD:SetPoint("TOPLEFT", DX + LBL_W, -14)
+    if details.playstyleDD.SetMotionScriptsWhileDisabled then details.playstyleDD:SetMotionScriptsWhileDisabled(true) end
+    details.playstyleDD:HookScript("OnEnter", function(self)
+        if not ns.HasListing() then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(PLAYSTYLE or T["Playstyle"], 1, 1, 1)
+        GameTooltip:AddLine(T["The playstyle is set when you list and can't be changed while you're listed. Delist and list again to change it."], nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    details.playstyleDD:HookScript("OnLeave", GameTooltip_Hide)
     if details.playstyleDD.SetDefaultText then
-        details.playstyleDD:SetDefaultText("|cff999999" .. (GROUP_FINDER_PLAYSTYLE_REQUIRED or "Pick a playstyle") .. "|r")
+        details.playstyleDD:SetDefaultText("|cff999999" .. (GROUP_FINDER_PLAYSTYLE_REQUIRED or T["Pick a playstyle"]) .. "|r")
     end
 
     details.voiceRow = CreateFrame("Frame", nil, details)
     details.voiceRow:SetPoint("TOPLEFT", 0, -44)
     details.voiceRow:SetPoint("TOPRIGHT", 0, -44)
     details.voiceRow:SetHeight(44)
-    Label(VOICE_CHAT or "Voice chat", -20, details.voiceRow)
+    Label(VOICE_CHAT or T["Voice chat"], -20, details.voiceRow)
     details.voiceDD = U.Dropdown(details.voiceRow, 220, function(root)
         if not HasVoiceModes() then return end
         local discord = C_Discord and C_Discord.IsVoiceEnabled and C_Discord.IsVoiceEnabled()
@@ -952,22 +1000,22 @@ function ns.BuildListingPage(f, p)
                 end)
             end
         end
-    end, function() return VoiceLabels()[L.voiceMode] or (VOICE_CHAT_MODE_NONE or "None") end)
+    end, function() return VoiceLabels()[L.voiceMode] or (VOICE_CHAT_MODE_NONE or T["None"]) end)
     details.voiceDD:SetPoint("TOPLEFT", DX + LBL_W, -14)
 
-    Label(DESCRIPTION or "Description", -104)
+    Label(DESCRIPTION or T["Description"], -104)
     details.commentHolder = CreateFrame("Frame", nil, details)
     details.commentHolder:SetPoint("TOPLEFT", DX, -126)
     details.commentHolder:SetPoint("TOPRIGHT", -DX, -126)
     details.commentHolder:SetHeight(92)
-    details.commentMissing = U.Text(details.commentHolder, "GameFontDisable", U.SIZE_LABEL)
+    details.commentMissing = U.Text(details.commentHolder, "GameFontDisable")
     details.commentMissing:SetPoint("TOPLEFT", 4, -8)
     details.commentMissing:SetPoint("RIGHT", -4, 0)
     details.commentMissing:SetJustifyH("LEFT")
-    details.commentMissing:SetText("The game's description box isn't loaded yet. Open the game's Looking for Group window once (hold Shift when opening it), then come back. You can list without a description meanwhile.")
+    details.commentMissing:SetText(T["The game's description box couldn't be loaded (it loads once you're out of combat). You can list without a description meanwhile."])
 
     -- Roles: your own (solo), or your role in the group plus a role check (leader / assist).
-    Label(LFG_LIST_YOUR_ROLES or "Your roles", -238)
+    Label(LFG_LIST_YOUR_ROLES or T["Your roles"], -238)
     details.soloRoles = CreateFrame("Frame", nil, details)
     details.soloRoles:SetPoint("TOPLEFT", DX + LBL_W, -228)
     details.soloRoles:SetSize(330, 34)
@@ -978,7 +1026,7 @@ function ns.BuildListingPage(f, p)
             function()
                 L.roles[key] = not L.roles[key]
                 if ns.HasListing() then SetDirty(true) else SaveRoles() end
-            end, U.ROLE_NAMES[key], "Roles you're willing to play. Shown on your listing.")
+            end, U.ROLE_NAMES[key], T["Roles you're willing to play. Shown on your listing."])
         if prev then chip:SetPoint("LEFT", prev, "RIGHT", 4, 0) else chip:SetPoint("LEFT", 0, 0) end
         prev = chip
     end
@@ -995,32 +1043,32 @@ function ns.BuildListingPage(f, p)
         end
     end, function()
         local r = UnitGroupRolesAssigned("player")
-        return r ~= "NONE" and (_G[r] or r) or (NONE or "None")
+        return r ~= "NONE" and (_G[r] or r) or (NONE or T["None"])
     end)
     details.roleDD:SetPoint("LEFT", 0, 0)
-    details.rolePoll = U.RedButton(details.groupRoles, ROLE_POLL or "Role check", 120, 24)
+    details.rolePoll = U.RedButton(details.groupRoles, ROLE_POLL or T["Role check"], 120, 24)
     details.rolePoll:SetPoint("LEFT", details.roleDD, "RIGHT", 10, 0)
     details.rolePoll:SetMotionScriptsWhileDisabled(true)
     details.rolePoll:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         if InitiateRolePoll then InitiateRolePoll() end
     end)
-    U.Tooltip(details.rolePoll, ROLE_POLL or "Role check", "Ask everyone in the group to pick their role. Leader or assistant only.")
+    U.Tooltip(details.rolePoll, ROLE_POLL or T["Role check"], T["Ask everyone in the group to pick their role. Leader or assistant only."])
 
     -- New player friendly (the game keeps this in a CVar between listings).
     local npfLabel = (U.HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:16:16|a " or "")
-        .. (LFG_LIST_NEW_PLAYER_FRIENDLY or "New player friendly")
+        .. (LFG_LIST_NEW_PLAYER_FRIENDLY or T["New player friendly"])
     details.npf = U.Check(details, npfLabel, function() return L.newPlayerFriendly end, function(v)
         L.newPlayerFriendly = v
         SetCVar("lfgNewPlayerFriendly", v and "1" or "0")
         SetDirty(true)
-    end, LFG_LIST_NEW_PLAYER_FRIENDLY or "New player friendly", "Mark your listing as welcoming to new players.")
+    end, LFG_LIST_NEW_PLAYER_FRIENDLY or T["New player friendly"], T["Mark your listing as welcoming to new players."])
     details.npf:SetPoint("TOPLEFT", DX - 4, -270)
 
     -- How other players will see your listing: the Browse list's own card, filled from this page.
     local previewLabel = U.Text(details, "GameFontNormal")
     previewLabel:SetPoint("TOPLEFT", DX, -312)
-    previewLabel:SetText("How others will see you")
+    previewLabel:SetText(T["How others will see you"])
     details.preview = BuildPreview(details)
     details.preview:SetPoint("TOPLEFT", DX - 3, -330)
     details.preview:SetPoint("TOPRIGHT", -DX + 3, -330)
@@ -1028,17 +1076,17 @@ function ns.BuildListingPage(f, p)
     note:SetPoint("TOPLEFT", details.preview, "BOTTOMLEFT", 3, -6)
     note:SetPoint("RIGHT", -DX, 0)
     note:SetJustifyH("LEFT")
-    note:SetText("Listed through the game's own group finder: it shows in the game's window too.")
+    note:SetText(T["Listed through the game's own group finder: it shows in the game's window too."])
 
     -- Bottom: error / status, then Back-or-Delist and List
-    page.post = U.RedButton(page, LFG_POST_GROUP_SOLO or "List self", 150, 24)
+    page.post = U.RedButton(page, LFG_POST_GROUP_SOLO or T["List self"], 150, 24)
     page.post:SetPoint("BOTTOMRIGHT", -24, 5)
     page.post:SetMotionScriptsWhileDisabled(true)
     page.post:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         L.Post()
     end)
-    page.back = U.RedButton(page, BACK or "Back", 120, 24)
+    page.back = U.RedButton(page, BACK or T["Back"], 120, 24)
     page.back:SetPoint("RIGHT", page.post, "LEFT", -8, 0)
     page.back:SetScript("OnClick", function()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
@@ -1054,6 +1102,21 @@ function ns.BuildListingPage(f, p)
     page.error:SetPoint("RIGHT", page.back, "LEFT", -16, 0)
     page.error:SetJustifyH("LEFT")
     page.error:SetTextColor(1, 0.4, 0.4)
+    -- One line, so a long warning can't wrap up into the lists above; hover it for all of it.
+    page.error:SetWordWrap(false)
+    page.error:SetMaxLines(1)
+    local errorHit = CreateFrame("Frame", nil, page)
+    errorHit:SetAllPoints(page.error)
+    errorHit:EnableMouse(true)
+    errorHit:SetScript("OnEnter", function(self)
+        local text = page.error:GetText()
+        if not text or text == "" then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        local r, g, b = page.error:GetTextColor()
+        GameTooltip:SetText(text, r, g, b, 1, true) -- wrapped
+        GameTooltip:Show()
+    end)
+    errorHit:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Events the game's listing page listens to.
     local ev = CreateFrame("Frame", nil, page)
@@ -1079,8 +1142,12 @@ function ns.BuildListingPage(f, p)
 
     page:SetScript("OnShow", function()
         if ns.HasListing() then
-            L.LoadActiveEntry()
-            LoadRoles()
+            -- Changes you haven't posted yet survive a trip to another tab; the page only reloads
+            -- your listing when there's nothing unsaved (it reloads anyway when the listing changes).
+            if not L.dirty then
+                L.LoadActiveEntry()
+                LoadRoles()
+            end
         elseif not L.dirty and HasVoiceModes() and C_VoiceChat and C_VoiceChat.GetActiveChannelID then
             -- Default voice choice from the voice channel you're in, as the game does.
             local inChannel = C_VoiceChat.GetActiveChannelID()

@@ -2,6 +2,7 @@
 -- LFG functions, the templates, art and fonts it borrows, the game data it reads, and the add-ons it
 -- works with. Prints a summary; "/seeker selftest all" lists every check.
 local ADDON, ns = ...
+local L = ns.L -- translations (Locale.lua)
 
 local function Has(path)
     local t = _G
@@ -70,14 +71,14 @@ function ns.SelfTest(arg)
         results[#results + 1] = { group = group, name = name, ok = ok, detail = detail }
     end
 
-    for _, fn in ipairs(FUNCTIONS) do Check("Game functions", fn, Has(fn)) end
+    for _, fn in ipairs(FUNCTIONS) do Check(L["Game functions"], fn, Has(fn)) end
     for _, t in ipairs(TEMPLATES) do Check("Templates", t[2], CanCreate(t[1], t[2])) end
     for _, a in ipairs(ATLASES) do Check("Art", a, HasAtlas(a)) end
     for _, f in ipairs(FONTS) do Check("Fonts", f, _G[f] ~= nil) end
 
     -- Game data
     local cats = ns.GetCategories()
-    Check("Game data", "categories at your level", #cats > 0, #cats .. " found")
+    Check(L["Game data"], L["categories at your level"], #cats > 0, #cats .. " found")
     local dungeons, placed = 0, 0
     for _, c in ipairs(cats) do
         for _, id in ipairs(C_LFGList.GetAvailableActivities(c.id) or {}) do
@@ -88,18 +89,21 @@ function ns.SelfTest(arg)
             end
         end
     end
-    Check("Game data", "dungeons with a known continent", dungeons > 0 and placed == dungeons,
-        ("%d of %d"):format(placed, dungeons))
+    Check(L["Game data"], L["dungeons with a known continent"], dungeons > 0 and placed == dungeons,
+        (L["%d of %d"]):format(placed, dungeons))
     local here = GetRealZoneText and GetRealZoneText()
-    Check("Game data", "your zone's continent", ns.GetZoneContinent(here) ~= nil,
+    Check(L["Game data"], L["your zone's continent"], ns.GetZoneContinent(here) ~= nil,
         (here or "?") .. " -> " .. tostring(ns.GetZoneContinent(here)))
 
     -- What Seeker works with
-    Check("Works with", "the game's group finder (for its description box)", _G.LFGListingComment ~= nil,
-        _G.LFGListingComment and "loaded" or "not loaded: open the game's Looking for Group window once")
-    Check("Works with", "Whisper Messenger (optional)", true, ns.HasWhisperMessenger() and "installed, connected" or "not installed")
+    local canUse, reason = ns.CanUseGroupFinder()
+    Check(L["Game data"], L["you can use the group finder"], canUse, not canUse and reason or nil)
+    if not _G.LFGListingComment and ns.LoadNativeFinder then ns.LoadNativeFinder() end
+    Check(L["Works with"], L["the game's group finder (for its description box)"], _G.LFGListingComment ~= nil,
+        _G.LFGListingComment and "loaded" or L["couldn't be loaded (Seeker loads it out of combat)"])
+    Check(L["Works with"], L["Whisper Messenger (optional)"], true, ns.HasWhisperMessenger() and L["installed, connected"] or L["not installed"])
 
-    ns.Print(("Self-test: %d passed, %d failed."):format(pass, fail))
+    ns.Print((L["Self-test: %d passed, %d failed."]):format(pass, fail))
     local group
     for _, r in ipairs(results) do
         if verbose or not r.ok then
@@ -111,6 +115,6 @@ function ns.SelfTest(arg)
                 r.detail and ("  |cff999999" .. r.detail .. "|r") or ""))
         end
     end
-    if not verbose then print("  |cff999999/seeker selftest all lists every check.|r") end
+    if not verbose then print(L["  |cff999999/seeker selftest all lists every check.|r"]) end
     return pass, fail
 end

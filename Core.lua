@@ -1,8 +1,7 @@
 -- Seeker: data layer (search results, XP rule, filters, actions).
 -- Behaviour mirrors Forever's own group finder (Blizzard_GroupFinder_VanillaStyle) where it has one.
 local ADDON, ns = ...
-
-ns.NAME = "Seeker LFG"
+local L = ns.L -- translations (Locale.lua)
 
 -- WoW Forever hotfix (Nov 2026): kill XP is nullified when the highest-level
 -- party member is MORE than 12 levels above the enemy.
@@ -16,8 +15,19 @@ local defaults = {
     replaceNative = false, -- open Seeker in place of the game's Looking for Group window
     useWhisperMessenger = true, -- whisper through Whisper Messenger when it's installed
     minimapAngle = 200,
+    minimap = {},          -- LibDBIcon's: the minimap button's position (minimapPos) and hidden state
     tab = "browse",
     sortMode = "xp",       -- see ns.SORT_MODES
+    activityGrouping = "xp", -- activity lists: "xp" (by what they'd give you) or "game" (the game's groups)
+    xpMarks = false,       -- show XP as a symbol (tick, question mark, cross) as well as a colour
+    autoRefresh = true,    -- search again on your next click or key press once results are 30s old
+    notes = {},            -- first-name key -> { text, name, time }: your notes on players
+    presets = {},          -- name -> saved filter setup (Setups.lua)
+    chat = {               -- groups and players looking in chat (Chat.lua)
+        enabled = true,
+        lfgChannelOnly = false, -- only the LookingForGroup channel, not General, world and the rest
+        alerts = false,         -- announce new chat posts that pass your filters
+    },
     alerts = {
         enabled = true,    -- tell me about new listings that match my filters
         fullXPOnly = false,
@@ -37,6 +47,17 @@ local defaults = {
         hideFull = false,
         hideUnknown = false,
         hideFar = false,     -- hide solo players standing on another continent from their dungeon
+        ignoredLeaders = {}, -- lowercased name -> name as shown: never show their listings
+        hideIgnored = true,  -- also hide leaders on the game's own ignore list
+        hideWords = "",      -- comma-separated: hide listings whose title or note has any of these
+        greyOutsidePick = false, -- keep listings outside the picked activities, greyed (as the game does)
+    },
+    who = {                  -- the Who page's filters and sort, kept between sessions
+        classesFiltered = {}, -- classID -> true: left out
+        racesFiltered = {},   -- raceID -> true: left out
+        mapsIncluded = {},    -- uiMapID -> true: only these zones
+        sortMode = "name",
+        ascending = true,
     },
 }
 
@@ -65,6 +86,73 @@ function ns.InitDB()
     end
     ApplyDefaults(SeekerLFGDB, defaults)
     ns.db = SeekerLFGDB
+    ns.LoadCharacterState()
+end
+
+-- Per character: what you browse (category, activities, your listing) and the filters that depend
+-- on the character (levels and roles), so an alt doesn't open on your main's dungeons. They're
+-- kept in SeekerLFGCharDB and copied into ns.db while you play, so the rest of Seeker reads them
+-- as before; everything else (messages, hidden players, the window) stays account-wide.
+local CHAR_KEYS = {
+    { "categoryID" }, { "activityIDs" }, { "searchSelf" },
+    { "filters", "levelMin" }, { "filters", "levelMax" },
+    { "filters", "playerRoles" }, { "filters", "groupNeeds" },
+}
+
+local function DeepCopy(v)
+    if type(v) ~= "table" then return v end
+    local t = {}
+    for k, x in pairs(v) do t[k] = DeepCopy(x) end
+    return t
+end
+ns.DeepCopy = DeepCopy
+
+local function GetPath(t, path)
+    for _, k in ipairs(path) do
+        if type(t) ~= "table" then return nil end
+        t = t[k]
+    end
+    return t
+end
+
+-- Set a value at a path in ns.db. A table is copied into the table already there, which the
+-- window's controls hold on to, rather than replacing it.
+local function SetPath(t, path, value)
+    for i = 1, #path - 1 do t = t[path[i]] end
+    local key = path[#path]
+    if type(value) == "table" and type(t[key]) == "table" then
+        wipe(t[key])
+        for k, v in pairs(value) do t[key][k] = DeepCopy(v) end
+    else
+        t[key] = DeepCopy(value)
+    end
+end
+ns.SetDBPath = function(path, value) SetPath(ns.db, path, value) end
+
+function ns.LoadCharacterState()
+    SeekerLFGCharDB = SeekerLFGCharDB or {}
+    local saved = SeekerLFGCharDB.state
+    for _, path in ipairs(CHAR_KEYS) do
+        -- This character's, or the default (never another character's).
+        local value
+        if saved then value = saved[table.concat(path, ".")] else value = GetPath(defaults, path) end
+        if value == nil and type(GetPath(defaults, path)) == "table" then value = GetPath(defaults, path) end
+        SetPath(ns.db, path, value)
+    end
+end
+
+function ns.SaveCharacterState()
+    if not ns.db then return end
+    SeekerLFGCharDB = SeekerLFGCharDB or {}
+    local state = {}
+    for _, path in ipairs(CHAR_KEYS) do state[table.concat(path, ".")] = DeepCopy(GetPath(ns.db, path)) end
+    SeekerLFGCharDB.state = state
+end
+
+do -- saved on the way out (logging out, or /reload)
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("PLAYER_LOGOUT")
+    ev:SetScript("OnEvent", function() ns.SaveCharacterState() end)
 end
 
 function ns.Print(...)
@@ -72,7 +160,6 @@ function ns.Print(...)
 end
 
 local LFG = C_LFGList or {}
-ns.LFG = LFG
 
 ---------------------------------------------------------------------------
 -- Categories / activities (as the game lists them)
@@ -151,12 +238,6 @@ function ns.GetFilteredActivities(categoryID, groupID)
     return activities
 end
 
-function ns.GetActivityGroupName(groupID)
-    if groupID and groupID ~= 0 and LFG.GetActivityGroupInfo then
-        return (LFG.GetActivityGroupInfo(groupID))
-    end
-end
-
 local function SortActivities(list)
     table.sort(list, function(x, y)
         local a, b = ns.GetActivity(x), ns.GetActivity(y)
@@ -208,17 +289,23 @@ end
 
 -- What each activity would give you in XP at your level, for the activity menu's sections.
 ns.ACTIVITY_SECTIONS = {
-    { key = "full", title = "Full XP for you", color = "|cff55ff55" },
-    { key = "above", title = "Above your level", color = "|cffff9933" },
-    { key = "some", title = "Some XP (only the tougher mobs)", color = "|cffffd133" },
-    { key = "none", title = "No XP for you", color = "|cff8a8a8a" },
-    { key = "other", title = "Other", color = "|cff999999" },
+    { key = "full", title = L["Full XP for you"], color = "|cff55ff55" },
+    { key = "above", title = L["Above your level"], color = "|cffff9933" },
+    { key = "some", title = L["Some XP (only the tougher mobs)"], color = "|cffffd133" },
+    { key = "none", title = L["No XP for you"], color = "|cff8a8a8a" },
+    { key = "other", title = L["Other"], color = "|cff999999" },
 }
+
+-- The level the 12-level rule is judged by for you: your party's highest (you'd join together),
+-- or yours when you're alone.
+function ns.MyXPLevel()
+    return (ns.MyGroupMaxLevel and ns.MyGroupMaxLevel()) or UnitLevel("player") or 0
+end
 
 function ns.ActivityXPClass(id)
     local lo, hi = ns.GetActivityRange(id)
     if not lo then return "other" end
-    local me = UnitLevel("player") or 0
+    local me = ns.MyXPLevel()
     if me > hi + ns.XP_GAP then return "none" end
     if me > lo + ns.XP_GAP then return "some" end
     if lo > me then return "above" end
@@ -367,12 +454,19 @@ function ns.GetActivityContinent(id)
 end
 
 -- The instance's own name in your language (for "already at the dungeon").
+local instanceNames = {} -- activityID -> the instance's name, or false (cached: it never changes)
 function ns.GetActivityInstanceName(id)
-    local a = ns.GetActivity(id)
-    if a and a.mapID and GetRealZoneText then
-        local ok, name = pcall(GetRealZoneText, a.mapID)
-        if ok and name and name ~= "" then return name end
+    local name = instanceNames[id]
+    if name == nil then
+        name = false
+        local a = ns.GetActivity(id)
+        if a and a.mapID and GetRealZoneText then
+            local ok, n = pcall(GetRealZoneText, a.mapID)
+            if ok and n and n ~= "" then name = n end
+        end
+        instanceNames[id] = name
     end
+    return name or nil
 end
 
 -- Zone name -> continent name, from the game's own map tree.
@@ -464,14 +558,24 @@ ns.RelevantActivities = RelevantActivities
 -- Where someone standing in this zone is, for these dungeons: "in" (inside or at one of them),
 -- "near" (same continent), "far" (another continent), or nil when it can't be told. Also returns
 -- the dungeon's activity ID when they're in it.
+-- An activity's dungeon name and instance name, bare (lowercase, no "The", no "(East)"), for
+-- comparing with where someone is. Cached: worked out once per activity, not on every redraw.
+local placeNames = {}
+local function PlaceNames(id)
+    local p = placeNames[id]
+    if not p then
+        local a = ns.GetActivity(id)
+        p = { dungeon = BareName(a and a.fullName or ns.GetActivityName(id)), instance = BareName(ns.GetActivityInstanceName(id)) }
+        placeNames[id] = p
+    end
+    return p.dungeon, p.instance
+end
+
 function ns.ZoneStatus(zone, activityIDs)
     if not zone or zone == "" or not activityIDs or #activityIDs == 0 then return nil end
-    local function Bare(s) return ((s or ""):lower():gsub("^the ", ""):gsub("%s*%b()", "")) end
-    local here = Bare(zone)
+    local here = BareName(zone)
     for _, id in ipairs(activityIDs) do
-        local a = ns.GetActivity(id)
-        local dungeon = Bare(a and a.fullName or ns.GetActivityName(id))
-        local instance = Bare(ns.GetActivityInstanceName(id))
+        local dungeon, instance = PlaceNames(id)
         if (instance ~= "" and here == instance)
             or (dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true))) then
             return "in", id
@@ -491,43 +595,27 @@ function ns.ZoneStatus(zone, activityIDs)
 end
 
 -- For a solo player: "near" (same continent as one of their dungeons), "far", or "unknown".
+-- Sets e.distance ("near", "far" or "unknown"), e.inDungeon, and the continents for the tooltip
+-- ("On Kalimdor, but the dungeon is in the Eastern Kingdoms"), from ns.ZoneStatus.
 function ns.EvaluateDistance(e)
-    local p = e.leader
-    e.continent = p and ns.GetZoneContinent(p.areaName)
-    e.dungeonContinent = nil
-    e.distance = "unknown"
-    e.inDungeon = false
+    local zone = e.leader and e.leader.areaName
+    e.continent = ns.GetZoneContinent(zone)
+    e.dungeonContinent, e.distance, e.inDungeon = nil, "unknown", false
     local acts = RelevantActivities(e)
-
-    -- Already inside (or at) the dungeon they listed for: "The Deadmines" vs "Deadmines".
-    local function Bare(s) return ((s or ""):lower():gsub("^the ", ""):gsub("%s*%b()", "")) end
-    local here = p and Bare(p.areaName)
-    if here and here ~= "" then
-        for _, id in ipairs(acts) do
-            local a = ns.GetActivity(id)
-            local dungeon = Bare(a and a.fullName or ns.GetActivityName(id))
-            -- The instance's own name, in your language, as the game reports where they are.
-            local instance = Bare(ns.GetActivityInstanceName(id))
-            if (instance ~= "" and here == instance)
-                or (dungeon ~= "" and (here == dungeon or dungeon:find(here, 1, true) or here:find(dungeon, 1, true))) then
-                e.distance, e.inDungeon = "near", true
-                e.dungeonContinent = ns.GetActivityContinent(id)
-                e.continent = e.continent or e.dungeonContinent
-                return
+    local status, id = ns.ZoneStatus(zone, acts)
+    if status == "in" then
+        -- Already inside (or at) the dungeon they listed for.
+        e.distance, e.inDungeon = "near", true
+        e.dungeonContinent = ns.GetActivityContinent(id)
+        e.continent = e.continent or e.dungeonContinent
+    elseif status then
+        e.distance = status
+        for _, aid in ipairs(acts) do
+            local dc = ns.GetActivityContinent(aid)
+            if dc then
+                e.dungeonContinent = e.dungeonContinent or dc
+                if dc == e.continent then e.dungeonContinent = dc break end
             end
-        end
-    end
-
-    if not e.continent then return end
-    for _, id in ipairs(acts) do
-        local dc = ns.GetActivityContinent(id)
-        if dc then
-            e.dungeonContinent = e.dungeonContinent or dc
-            if dc == e.continent then
-                e.distance, e.dungeonContinent = "near", dc
-                return
-            end
-            e.distance = "far"
         end
     end
 end
@@ -553,23 +641,33 @@ function ns.SearchTarget()
     return cat, acts
 end
 
+-- What a search covered, as a key: alerts compare results only with earlier ones for the same
+-- search, so switching category doesn't announce everything in the new one as new.
+function ns.SearchKey(cat, acts)
+    local ids = {}
+    for _, id in ipairs(acts or {}) do ids[#ids + 1] = id end
+    table.sort(ids)
+    return tostring(cat) .. ":" .. table.concat(ids, ",")
+end
+
 function ns.DoSearch()
     if not LFG.Search then
-        ns.Print("Searching isn't available on this client.")
+        ns.Print(L["Searching isn't available on this client."])
         return false
     end
     local cat, acts = ns.SearchTarget()
     if not cat or cat == 0 then
-        ns.Print("Pick a category first.")
+        ns.Print(L["Pick a category first."])
         return false
     end
     if ns.ClearPendingSearch then ns.ClearPendingSearch() end
     local ok, err = pcall(LFG.Search, cat, 0, 0, nil, false, nil, acts)
     if not ok then
-        ns.Print("Search failed: " .. tostring(err))
+        ns.Print(L["Search failed: "] .. tostring(err))
         return false
     end
     ns.searching, ns.searchFailed = true, false
+    ns.lastSearchKey = ns.SearchKey(cat, acts)
     local started = GetTime()
     ns.searchStarted = started
     -- If no answer comes (throttled or blocked), don't leave Search greyed out.
@@ -585,9 +683,29 @@ end
 ---------------------------------------------------------------------------
 -- Result collection
 ---------------------------------------------------------------------------
+-- How the game shows a listing's party, from its activities' display types: the note (Comment),
+-- role counts, a player count, role seats, class icons or nothing. With several activities the
+-- most informative wins, as in the game's LFGBrowseUtil_GetBestDisplayTypeForActivityIDs.
+local DISPLAY_PRIORITY
+function ns.BestDisplayType(activityIDs)
+    local T = Enum and Enum.LFGListDisplayType
+    if not T then return nil end
+    DISPLAY_PRIORITY = DISPLAY_PRIORITY or {
+        [T.Comment or -1] = 6, [T.RoleCount or -2] = 5, [T.PlayerCount or -3] = 4,
+        [T.RoleEnumerate or -4] = 3, [T.ClassEnumerate or -5] = 2, [T.HideAll or -6] = 1,
+    }
+    local best, bestPriority = nil, 0
+    for _, id in ipairs(activityIDs or {}) do
+        local a = ns.GetActivity(id)
+        local p = a and a.displayType and DISPLAY_PRIORITY[a.displayType]
+        if p and p > bestPriority then best, bestPriority = a.displayType, p end
+    end
+    return best
+end
+
 local function BuildEntry(id, myActivities)
     local info = LFG.GetSearchResultInfo(id)
-    if not info or info.isDelisted then return nil end
+    if not info then return nil end
 
     local e = {
         id = id,
@@ -596,6 +714,9 @@ local function BuildEntry(id, myActivities)
         activityIDs = info.activityIDs or {},
         age = info.age or 0,
         isSelf = info.hasSelf and true or false,
+        -- Delisted since the search: kept, greyed out, as the game keeps them until the next search.
+        isDelisted = info.isDelisted and true or false,
+        displayType = ns.BestDisplayType(info.activityIDs),
         -- Friends and guildmates in the listing, as the game counts them.
         friends = (info.numBNetFriends or 0) + (info.numCharFriends or 0),
         guildmates = info.numGuildMates or 0,
@@ -648,11 +769,14 @@ local function BuildEntry(id, myActivities)
     end
     e.maxPlayers = maxPlayers > 0 and maxPlayers or 5
 
-    -- Listings for one of your own listed activities (the game puts these first, in blue).
+    -- Listings for one of your own listed activities (the game puts these first, in blue, and
+    -- names only the activities you share).
     if myActivities then
+        e.matching = {}
         for _, aid in ipairs(e.activityIDs) do
-            if tContains(myActivities, aid) then e.matchesMine = true break end
+            if tContains(myActivities, aid) then e.matching[#e.matching + 1] = aid end
         end
+        e.matchesMine = #e.matching > 0
     end
     return e
 end
@@ -678,7 +802,6 @@ end
 -- XP evaluation
 ---------------------------------------------------------------------------
 local XP_RANK = { safe = 3, partial = 2, none = 1, unknown = 0 }
-ns.XP_RANK = XP_RANK
 
 -- status: "safe"    = highest level <= lowest mobs + 12  (full XP whole instance)
 --         "partial" = highest level <= highest mobs + 12 (XP from the tougher mobs only)
@@ -737,8 +860,87 @@ local function MatchesText(e, needle)
     return false
 end
 
+---------------------------------------------------------------------------
+-- Hidden leaders and words
+---------------------------------------------------------------------------
+local function LeaderKey(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    return SafeLower(name)
+end
+
+function ns.IsLeaderIgnored(name)
+    local key = LeaderKey(name)
+    return key and ns.db.filters.ignoredLeaders[key] and true or false
+end
+
+function ns.IgnoreLeader(name)
+    local key = LeaderKey(name)
+    if not key then return end
+    ns.db.filters.ignoredLeaders[key] = name -- the name as shown, for the list
+    ns.Print((L["%s's listings are hidden. /seeker unignore %s shows them again."]):format(name, name))
+    if ns.Render then ns.Render() end
+end
+
+-- True if they were hidden.
+function ns.UnignoreLeader(name)
+    local key = LeaderKey(name)
+    if not key or not ns.db.filters.ignoredLeaders[key] then return false end
+    ns.db.filters.ignoredLeaders[key] = nil
+    if ns.Render then ns.Render() end
+    return true
+end
+
+function ns.IgnoredLeaders()
+    local list = {}
+    for key, name in pairs(ns.db.filters.ignoredLeaders) do
+        list[#list + 1] = type(name) == "string" and name or key
+    end
+    table.sort(list, function(a, b) return a:lower() < b:lower() end)
+    return list
+end
+
+-- Hidden by you in Seeker, or (when that option is on) on the game's own ignore list.
+function ns.IsHiddenLeader(name)
+    if not name then return false end
+    if ns.IsLeaderIgnored(name) then return true end
+    if ns.db.filters.hideIgnored and C_FriendList and C_FriendList.IsIgnored then
+        local ok, ignored = pcall(C_FriendList.IsIgnored, name)
+        if ok and ignored then return true end
+    end
+    return false
+end
+
+-- The hide-words list, lowercased, parsed once per change.
+local wordsCache, wordsSource
+function ns.HiddenWords()
+    local src = ns.db.filters.hideWords or ""
+    if src ~= wordsSource then
+        wordsSource, wordsCache = src, {}
+        for word in src:gmatch("[^,]+") do
+            word = SafeLower(strtrim(word))
+            if word ~= "" then wordsCache[#wordsCache + 1] = word end
+        end
+    end
+    return wordsCache
+end
+
+function ns.HasHiddenWord(e)
+    local words = ns.HiddenWords()
+    if #words == 0 then return false end
+    local title, note = SafeLower(e.info and e.info.name), SafeLower(e.info and e.info.comment)
+    for _, w in ipairs(words) do
+        if title:find(w, 1, true) or note:find(w, 1, true) then return true end
+    end
+    return false
+end
+
 -- Open seats by role, from the game's own counts when it gives them.
 function ns.Remaining(e, role)
+    -- A group from chat: the roles its message asked for (none named, so it could be anything).
+    if e.fromChat then
+        if not e.chatNeeds then return 1 end
+        return e.chatNeeds[role] and 1 or 0
+    end
     local c = e.counts
     if c then
         local key = ({ tank = "TANK_REMAINING", healer = "HEALER_REMAINING", dps = "DAMAGER_REMAINING" })[role]
@@ -757,11 +959,19 @@ local function Passes(e, f)
         return true -- your own listing always shows, at the top
     end
 
+    if ns.IsHiddenLeader(e.leaderName) then return false end
+    if ns.HasHiddenWord(e) then return false end
+
+    -- Outside the activities you picked: hidden, or (with that option on) kept greyed out at the
+    -- bottom, as the game greys them until the next search.
     local sel = ns.SelectedActivities()
     if sel and not ns.db.searchSelf then
         local found = false
         for _, id in ipairs(e.activityIDs) do if ns.db.activityIDs[id] then found = true break end end
-        if not found then return false end
+        if not found then
+            if not f.greyOutsidePick then return false end
+            e.outsidePick = true
+        end
     end
 
     if f.text and f.text ~= "" and not MatchesText(e, SafeLower(f.text)) then return false end
@@ -818,23 +1028,94 @@ end
 -- How the lists can be sorted. Whatever the choice, your own listing comes first, then listings
 -- for your listed activities (as the game sorts), then ones with friends or guildmates in them.
 ns.SORT_MODES = {
-    { key = "xp", label = "Best XP first" },
-    { key = "newest", label = "Newest first" },
-    { key = "oldest", label = "Oldest first" },
-    { key = "levelLow", label = "Level, low to high" },
-    { key = "levelHigh", label = "Level, high to low" },
-    { key = "size", label = "Biggest groups first" },
+    { key = "xp", label = L["Best XP first"] },
+    { key = "newest", label = L["Newest first"] },
+    { key = "oldest", label = L["Oldest first"] },
+    { key = "levelLow", label = L["Level, low to high"] },
+    { key = "levelHigh", label = L["Level, high to low"] },
+    { key = "size", label = L["Biggest groups first"] },
+    { key = "fit", label = L["Best fit for my roles (the game's order)"] },
 }
 
 local function Social(e) return (e.friends or 0) + (e.guildmates or 0) end
 
+-- The game's own order (LFGBrowseUtil_SortSearchResults), worked out once per redraw. Groups: one
+-- with a seat for a role you play first, then bigger groups, then ones needing a tank, then a
+-- healer. Solo players: whoever can play the role your party most lacks first (tank, healer,
+-- DPS, with roles your party already has moved to the end when you're listed for a dungeon).
+local DUNGEON_EXPECTED = { TANK = 1, HEALER = 1, DAMAGER = 3 }
+function ns.FitContext()
+    local ctx = { order = { "TANK", "HEALER", "DAMAGER" } }
+    local ok, roles = pcall(function() return C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles() end)
+    ctx.roles = ok and roles or {}
+    local listing = ns.HasListing() and ns.GetListing()
+    local dungeonRoles = false
+    for _, id in ipairs(listing and listing.activityIDs or {}) do
+        local a = ns.GetActivity(id)
+        if a and a.useDungeonRoleExpectations then dungeonRoles = true break end
+    end
+    local counts = dungeonRoles and GetGroupMemberCounts and GetGroupMemberCounts()
+    if counts then
+        for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+            if (counts[role] or 0) >= DUNGEON_EXPECTED[role] then
+                tDeleteItem(ctx.order, role)
+                tinsert(ctx.order, role)
+            end
+        end
+    end
+    return ctx
+end
+
+local LEADER_ROLE_KEY = { TANK = "tank", HEALER = "healer", DAMAGER = "dps" }
+function ns.ComputeFit(e, ctx)
+    local c = e.counts or {}
+    if e.isSolo then
+        e.fitRank = 99
+        for i, role in ipairs(ctx.order) do
+            local can = c["LEADER_ROLE_" .. role]
+            if can == nil then can = e.roles and e.roles[LEADER_ROLE_KEY[role]] end
+            if can then e.fitRank = i break end
+        end
+    else
+        local my = ctx.roles
+        e.fitTank = (c.TANK_REMAINING or 0) > 0 and my.tank and true or false
+        e.fitHeal = (c.HEALER_REMAINING or 0) > 0 and my.healer and true or false
+        local fitDPS = (c.DAMAGER_REMAINING or 0) > 0 and my.dps and true or false
+        e.fitSlot = e.fitTank or e.fitHeal or fitDPS
+    end
+end
+
+-- nil when the two are equal in the game's order.
+local function FitBefore(a, b)
+    if a.isSolo then
+        if (a.fitRank or 99) ~= (b.fitRank or 99) then return (a.fitRank or 99) < (b.fitRank or 99) end
+        return nil
+    end
+    if (a.fitSlot or false) ~= (b.fitSlot or false) then return a.fitSlot or false end
+    if a.numMembers ~= b.numMembers then return a.numMembers > b.numMembers end
+    if (a.fitTank or false) ~= (b.fitTank or false) then return a.fitTank or false end
+    if (a.fitHeal or false) ~= (b.fitHeal or false) then return a.fitHeal or false end
+    return nil
+end
+
 local function SortEntries(a, b)
     if a.isSelf ~= b.isSelf then return a.isSelf end
+    -- Delisted, or outside your picked activities: greyed out, at the bottom.
+    local da, db = (a.isDelisted or a.outsidePick) and true or false, (b.isDelisted or b.outsidePick) and true or false
+    if da ~= db then return db end
+    -- Group finder listings before chat posts (which say less, and may be stale).
+    if (a.fromChat or false) ~= (b.fromChat or false) then return b.fromChat or false end
     if (a.matchesMine or false) ~= (b.matchesMine or false) then return a.matchesMine or false end
     local sa, sb = Social(a) > 0, Social(b) > 0
     if sa ~= sb then return sa end
     local mode = ns.db.sortMode
     local la, lb = a.maxLevel or 0, b.maxLevel or 0
+    if mode == "fit" then
+        local before = FitBefore(a, b)
+        if before ~= nil then return before end
+        if (a.age or 0) ~= (b.age or 0) then return (a.age or 0) > (b.age or 0) end -- older first, as the game
+        return a.id < b.id
+    end
     if mode == "newest" or mode == "oldest" then
         if (a.age or 0) ~= (b.age or 0) then
             if mode == "newest" then return (a.age or 0) < (b.age or 0) end
@@ -850,6 +1131,9 @@ local function SortEntries(a, b)
     end
     local ra, rb = XP_RANK[a.xpStatus] or 0, XP_RANK[b.xpStatus] or 0
     if ra ~= rb then return ra > rb end
+    -- Equal on XP: the game's own order (a seat for your role, then size), then newest.
+    local before = FitBefore(a, b)
+    if before ~= nil then return before end
     if (a.age or 0) ~= (b.age or 0) then return (a.age or 0) < (b.age or 0) end
     return a.id < b.id
 end
@@ -1002,10 +1286,24 @@ function ns.GetFiltered()
         end
         if mine.isSolo then table.insert(players, 1, mine) else table.insert(groups, 1, mine) end
     end
+    -- Groups and players looking in chat (Chat.lua), unless they also have a listing here.
+    if ns.ChatEntries then
+        local listed = {}
+        for _, list in ipairs({ groups, players }) do
+            for _, e in ipairs(list) do
+                local key = e.leaderName and ns.LocationKey(e.leaderName)
+                if key then listed[key] = true end
+            end
+        end
+        local cg, cp = ns.ChatEntries(listed)
+        for _, e in ipairs(cg) do groups[#groups + 1] = e end
+        for _, e in ipairs(cp) do players[#players + 1] = e end
+    end
     local f = ns.db.filters
     local fg, fp = {}, {}
-    for _, e in ipairs(groups) do if Passes(e, f) then fg[#fg + 1] = e end end
-    for _, e in ipairs(players) do if Passes(e, f) then fp[#fp + 1] = e end end
+    local ctx = ns.FitContext()
+    for _, e in ipairs(groups) do if Passes(e, f) then ns.ComputeFit(e, ctx) fg[#fg + 1] = e end end
+    for _, e in ipairs(players) do if Passes(e, f) then ns.ComputeFit(e, ctx) fp[#fp + 1] = e end end
     table.sort(fg, SortEntries)
     table.sort(fp, SortEntries)
     return fg, fp, #groups, #players
@@ -1020,15 +1318,44 @@ end
 local LOCATION_TTL = 15 * 60
 local locations = {}
 
+-- Kept by first name. In Forever a character's name is a first name and a surname ("Albis
+-- Frost"); the first name alone is the character's own, unique name. /who finds people by it,
+-- and some sources (the game's /who answers, your friends list) may give only it, so "Albis" and
+-- "Albis Frost" must be the same person here.
 local function LocationKey(name)
     if type(name) ~= "string" or name == "" then return nil end
-    return (name:match("^[^-]+") or name):lower()
+    name = name:match("^[^-]+") or name        -- no realm
+    return (name:match("^%S+") or name):lower() -- the first name
 end
+ns.LocationKey = LocationKey
 
-function ns.RememberLocation(name, zone, source)
+-- level and classFile when the source says (a /who answer does): chat posts don't, so a lookup
+-- for a poster also tells Seeker their level and class.
+-- Older than this, a remembered player is dropped (about once a minute): their zone is long out
+-- of date, and the guild roster and /who answers would otherwise pile up all session.
+local FORGET_AFTER = 60 * 60
+local lastForget = 0
+
+function ns.RememberLocation(name, zone, source, level, classFile)
     local key = LocationKey(name)
     if not key or type(zone) ~= "string" or zone == "" then return end
-    locations[key] = { zone = zone, time = GetTime(), source = source }
+    local now = GetTime()
+    if now - lastForget > 60 then
+        lastForget = now
+        for k, l in pairs(locations) do
+            if now - l.time > FORGET_AFTER then locations[k] = nil end
+        end
+    end
+    local old = locations[key]
+    locations[key] = {
+        zone = zone, time = GetTime(), source = source,
+        level = level or (old and old.level), classFile = classFile or (old and old.classFile),
+    }
+end
+
+-- What Seeker knows about a player from any source, recent or not: { zone, time, level, classFile }.
+function ns.GetKnownPlayer(name)
+    return locations[LocationKey(name) or ""]
 end
 
 -- zone, seconds since it was learned, and where from; nil when unknown or too old.
@@ -1061,7 +1388,7 @@ function ns.RememberWhoResults()
     if not (C_FriendList and C_FriendList.GetNumWhoResults and C_FriendList.GetWhoInfo) then return end
     for i = 1, C_FriendList.GetNumWhoResults() or 0 do
         local info = C_FriendList.GetWhoInfo(i)
-        if info then ns.RememberLocation(info.fullName, info.area, "who") end
+        if info then ns.RememberLocation(info.fullName, info.area, "who", info.level, info.filename) end
     end
 end
 
@@ -1097,123 +1424,239 @@ local function EndQuietLookup()
         C_FriendList.SetWhoToUi(false)
     end
 end
+ns.EndQuietLookup = EndQuietLookup
 
--- Finding where group members are, automatically. The game only runs /who from a click or key
--- press, and allows about one every five seconds. So Seeker keeps a queue of members whose
--- location isn't known (filled from every search, and moved to the front for groups you hover),
--- and each click, scroll or key press in Seeker's window quietly looks up the next one. Answers
--- come back without a window or chat line, and an open tooltip updates itself.
-local WHO_GAP = 5.5
-local ASKED_AGAIN_AFTER = 120 -- don't ask about the same name again for two minutes
-local lastLookup = 0
-local queue, queued, asked = {}, {}, {}
-
-local function ShortKey(name)
-    return name and (name:match("^[^-]+") or name):lower()
+function ns.IsQuietLookup()
+    return ns.silentWhoUntil ~= nil and GetTime() < ns.silentWhoUntil
 end
+
+-- A /who that isn't one of Seeker's quiet lookups (typed in chat, another addon's, or the Who tab)
+-- ends any lookup in progress at once, so its answer goes where it was meant to and isn't swallowed.
+local quietSending = false
+if C_FriendList and C_FriendList.SendWho and hooksecurefunc then
+    hooksecurefunc(C_FriendList, "SendWho", function()
+        if not quietSending and ns.silentWhoUntil then EndQuietLookup() end
+    end)
+end
+
+-- Finding where a listing's members are, when you ask: the map button on a card scans that one
+-- group (or chat poster), so only the few players you're interested in are looked up, never the
+-- whole result list. The game only runs /who from a click or key press, and allows about one every
+-- five seconds: the button's click runs the first lookup, and each click, scroll or key press in
+-- Seeker's window after it runs the next. Answers come back without a window or chat line, and
+-- an open tooltip updates itself.
+-- Two kinds of lookup:
+--   a zone sweep, /who z-"<zone>" <levels>: everyone in the group's lister's zone within the
+--     group's level range. Groups usually gather in one place, so one sweep often finds them all.
+--   a name, /who n-"<first name>": one member the sweep (if any) didn't find.
+local WHO_GAP = 5.5           -- the game answers about one /who every five seconds
+local ANSWER_WAIT = 6         -- no answer by then: the game dropped it (throttled); try again once
+local ASKED_AGAIN_AFTER = 120 -- don't ask about the same name (or sweep the same zone) again for two minutes
+local lastLookup = 0
+local queue = {}     -- entries, next first: { kind = "name"|"zone", key, name | zone, lo, hi, members, prio, tries }
+local queued = {}    -- entry key -> entry
+local asked = {}     -- name key -> when last asked
+local notFound = {}  -- name key -> when a lookup came back without them (offline, or hidden from /who)
+local swept = {}     -- zone entry key -> when swept
+local inFlight       -- the entry waiting for its answer
+
+local ShortKey = LocationKey
 
 local function NeedsLookup(p)
     if not p.name or (p.areaName and p.areaName ~= "") or ns.GetKnownLocation(p.name) then return false end
-    local t = asked[ShortKey(p.name)]
-    return not t or GetTime() - t > ASKED_AGAIN_AFTER
+    local key = ShortKey(p.name)
+    local t = asked[key]
+    if t and GetTime() - t <= ASKED_AGAIN_AFTER then return false end
+    return true
 end
 
--- Queue these players' lookups; first = true puts them at the front (a group you're looking at).
-function ns.QueueLocate(members, first)
-    for i = #(members or {}), 1, -1 do
-        local p = members[i]
-        local key = ShortKey(p.name)
-        if key and NeedsLookup(p) then
-            if queued[key] then
-                if first then
-                    for j, n in ipairs(queue) do
-                        if ShortKey(n) == key then table.remove(queue, j) break end
-                    end
-                    table.insert(queue, 1, p.name)
-                end
-            else
-                queued[key] = true
-                if first then table.insert(queue, 1, p.name) else queue[#queue + 1] = p.name end
-            end
+local function Enqueue(entry, front)
+    local old = queued[entry.key]
+    if old then
+        if not front then return end
+        for i, q in ipairs(queue) do if q == old then table.remove(queue, i) break end end
+        entry.tries = old.tries
+    end
+    queued[entry.key] = entry
+    if front then table.insert(queue, 1, entry) else queue[#queue + 1] = entry end
+end
+
+-- Queue lookups for these members of a group (e, when given, for its lister's zone): a zone sweep
+-- first when two or more are unknown, then each by name. first = true puts them at the front (a
+-- group you're looking at).
+function ns.QueueLocate(members, first, e)
+    local unknown = {}
+    for _, p in ipairs(members or {}) do
+        if ShortKey(p.name) and NeedsLookup(p) then unknown[#unknown + 1] = p end
+    end
+    if #unknown == 0 then return end
+    local entries = {}
+    local leader = e and e.leader
+    local zone = leader and ((leader.areaName ~= "" and leader.areaName) or ns.GetKnownLocation(leader.name))
+    if zone and #unknown >= 2 then
+        local lo, hi, inSweep = 999, 0, {}
+        for _, p in ipairs(unknown) do
+            if p.level then lo, hi = math.min(lo, p.level), math.max(hi, p.level) end
+            inSweep[ShortKey(p.name)] = true
         end
+        if hi == 0 then lo, hi = 1, 99 end
+        local key = ("zone:%s:%d-%d"):format(zone:lower(), lo, hi)
+        local t = swept[key]
+        if not t or GetTime() - t > ASKED_AGAIN_AFTER then
+            entries[#entries + 1] = { kind = "zone", key = key, zone = zone, lo = lo, hi = hi, members = inSweep }
+        end
+    end
+    for _, p in ipairs(unknown) do
+        entries[#entries + 1] = { kind = "name", key = "name:" .. ShortKey(p.name), name = p.name, nameKey = ShortKey(p.name) }
+    end
+    -- To the front in order (sweep first), or to the back.
+    if first then
+        for i = #entries, 1, -1 do entries[i].prio = true Enqueue(entries[i], true) end
+    else
+        for _, entry in ipairs(entries) do Enqueue(entry, false) end
     end
 end
 
--- Members of every group in the results, for the queue (the game sends only each lister's zone).
-function ns.QueueLocateResults(groups)
-    for _, e in ipairs(groups or {}) do
-        if not e.isSolo and not e.isSelf then
-            local members = {}
-            for i = 1, e.numMembers or 0 do
-                local ok, p = pcall(C_LFGList.GetSearchResultPlayerInfo, e.id, i)
-                if ok and p then members[#members + 1] = p end
-            end
-            ns.QueueLocate(members)
+
+-- Still worth sending? A name already found (by a sweep, say), or a zone swept a moment ago, isn't.
+local function StillNeeded(entry)
+    if entry.kind == "zone" then
+        local t = swept[entry.key]
+        if t and GetTime() - t <= ASKED_AGAIN_AFTER then return false end
+        for key in pairs(entry.members) do
+            if not ns.GetKnownLocation(key) then return true end
         end
+        return false
     end
+    if ns.GetKnownLocation(entry.name) then return false end
+    local t = asked[entry.nameKey]
+    return not (t and GetTime() - t <= ASKED_AGAIN_AFTER)
+end
+
+local function RefreshOpenTooltip()
+    local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
+    if owner and owner.item and ns.ShowEntryTooltip then ns.ShowEntryTooltip(owner, owner.item) end
 end
 
 -- Run the next lookup, if one's waiting and the game would allow it. Called from clicks, scrolls
--- and key presses (a /who needs one); harmless to call often.
-function ns.PumpLocate()
+-- and key presses (a /who needs one); harmless to call often. fromKey: a key press anywhere while
+-- Seeker's window is open, which no search or post is waiting on.
+function ns.PumpLocate(fromKey)
     if #queue == 0 or not (C_FriendList and C_FriendList.SendWho) then return end
-    if GetTime() - lastLookup < WHO_GAP then return end
+    if GetTime() - lastLookup < WHO_GAP or inFlight then return end
     if ns.IsWhoPageShown and ns.IsWhoPageShown() then return end -- the Who tab is yours
-    -- The game allows one search or /who per click: a click that opens or picks from a menu (the
-    -- category and activity menus search), or one on the List yourself page (posting), keeps it.
-    local okM, menuOpen = pcall(function() return Menu and Menu.GetManager and Menu.GetManager():GetOpenMenu() end)
-    if okM and menuOpen then return end
-    local win = _G.SeekerLFGFrame
-    if win and win.pages and win.pages.listing and win.pages.listing:IsShown() then return end
     if ns.whoUntil and GetTime() < ns.whoUntil then return end
+    if not fromKey then
+        -- The game allows one search or /who per click: a click that opens or picks from a menu
+        -- (the category and activity menus search), or one on the List yourself page (posting),
+        -- keeps it.
+        local okM, menuOpen = pcall(function() return Menu and Menu.GetManager and Menu.GetManager():GetOpenMenu() end)
+        if okM and menuOpen then return end
+        local win = _G.SeekerLFGFrame
+        if win and win.pages and win.pages.listing and win.pages.listing:IsShown() then return end
+    end
     while #queue > 0 do
-        local name = table.remove(queue, 1)
-        local key = ShortKey(name)
-        queued[key] = nil
-        if not ns.GetKnownLocation(name) and not (asked[key] and GetTime() - asked[key] <= ASKED_AGAIN_AFTER) then
-            asked[key] = GetTime()
+        local entry = table.remove(queue, 1)
+        queued[entry.key] = nil
+        if StillNeeded(entry) then
+            local query
+            if entry.kind == "zone" then
+                swept[entry.key] = GetTime()
+                query = ('z-"%s" %d-%d'):format(entry.zone, entry.lo, entry.hi)
+            else
+                asked[entry.nameKey] = GetTime()
+                -- By first name: the character's own name, which /who matches.
+                query = ('n-"%s"'):format((entry.name:match("^[^-]+") or entry.name):match("^%S+") or entry.name)
+            end
             lastLookup = GetTime()
+            inFlight = entry
             local started = GetTime()
-            ns.silentWhoUntil = started + 6
+            ns.silentWhoUntil = started + ANSWER_WAIT
             MuteGameWho()
             if C_FriendList.SetWhoToUi then C_FriendList.SetWhoToUi(true) end -- results to Seeker, not chat
-            local ok = pcall(C_FriendList.SendWho, 'n-"' .. (name:match("^[^-]+") or name) .. '"')
+            quietSending = true
+            local ok = pcall(C_FriendList.SendWho, query)
+            quietSending = false
             if not ok then
+                inFlight = nil
                 EndQuietLookup()
                 return
             end
-            -- If no answer comes (they logged off), end it anyway.
-            C_Timer.After(6.5, function()
-                if ns.silentWhoUntil == started + 6 then EndQuietLookup() end
+            -- No answer: the game dropped it (another /who just before, most likely). Ask once more.
+            C_Timer.After(ANSWER_WAIT + 0.5, function()
+                if inFlight ~= entry then return end
+                inFlight = nil
+                EndQuietLookup()
+                if (entry.tries or 0) < 1 then
+                    entry.tries = (entry.tries or 0) + 1
+                    if entry.kind == "zone" then swept[entry.key] = nil else asked[entry.nameKey] = nil end
+                    Enqueue(entry, true)
+                end
+                RefreshOpenTooltip()
             end)
             return
         end
     end
 end
 
-function ns.LocatePending()
-    return #queue
-end
-
--- Is this player waiting for a lookup (queued, or asked and not answered yet)?
-function ns.IsLocating(name)
+-- Where a lookup for this player stands: "looking" (asked, waiting for the answer), "queued",
+-- "notfound" (the answer didn't have them: offline, or hidden from /who), or nil.
+function ns.LocateState(name)
     local key = ShortKey(name)
-    if not key then return false end
-    if queued[key] then return true end
-    return asked[key] and GetTime() - asked[key] < 7 or false
+    if not key then return nil end
+    if inFlight and ((inFlight.kind == "name" and inFlight.nameKey == key) or (inFlight.kind == "zone" and inFlight.members[key])) then
+        return "looking"
+    end
+    if queued["name:" .. key] then return "queued" end
+    for _, q in ipairs(queue) do
+        if q.kind == "zone" and q.members[key] then return "queued" end
+    end
+    local t = notFound[key]
+    if t and GetTime() - t <= ASKED_AGAIN_AFTER then return "notfound" end
+    return nil
 end
 
--- A /who answer arrived. Remember it, and if it was one of Seeker's quiet lookups, send /who
--- results back to chat (unless the Who tab is open) and refresh the tooltip on show.
+-- A listing's members (a group's, or a chat poster) whose zone isn't known and isn't being looked
+-- up or just came back not found: what its map button would scan.
+function ns.UnknownMembers(e)
+    local out = {}
+    if not e or e.isSelf or e.isDelisted then return out end
+    for _, p in ipairs(e.members or {}) do
+        if p.name and (not p.areaName or p.areaName == "") and not ns.GetKnownLocation(p.name)
+            and not ns.LocateState(p.name) then
+            out[#out + 1] = p
+        end
+    end
+    return out
+end
+
+-- Scan one listing (its map button): its lookups go to the front of the queue (a zone sweep first
+-- for a group), and the first runs now, on the button's click. Returns how many members it's for.
+function ns.LocateEntry(e)
+    local members = ns.UnknownMembers(e)
+    if #members == 0 then return 0 end
+    ns.QueueLocate(members, true, e)
+    ns.PumpLocate(true)
+    if ns.QueueRender then ns.QueueRender() end
+    return #members
+end
+
+-- A /who answer arrived. Remember it, and if it was one of Seeker's quiet lookups, note who it
+-- didn't find, send /who results back to chat (unless the Who tab is open) and refresh the
+-- tooltip on show.
 function ns.OnWhoListUpdate()
     ns.RememberWhoResults()
     if ns.silentWhoUntil and GetTime() < ns.silentWhoUntil then
+        local entry = inFlight
+        inFlight = nil
+        if entry and entry.kind == "name" and not ns.GetKnownLocation(entry.name) then
+            notFound[entry.nameKey] = GetTime()
+        end
         -- Seeker hears /who answers before the game does, so the quiet lookup is only ended on the
         -- next frame, after the game's own listeners have (not) seen this one.
         C_Timer.After(0, function()
             EndQuietLookup()
-            local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
-            if owner and owner.item and ns.ShowEntryTooltip then ns.ShowEntryTooltip(owner, owner.item) end
+            RefreshOpenTooltip()
         end)
     end
 end
@@ -1240,9 +1683,11 @@ end
 ---------------------------------------------------------------------------
 -- New-match alerts
 ---------------------------------------------------------------------------
--- Every listing seen this session. The first results after logging in are only remembered,
--- so you're told about what's new from then on, not about everything already listed.
-local seen, primed = {}, false
+-- Every listing seen this session, per search (category and activities). The first results of
+-- each search are only remembered, so you're told about what's new since, not about everything
+-- already listed when you first look somewhere. Every result is remembered, filtered out or not,
+-- so loosening a filter doesn't announce listings you could have seen all along.
+local seenBySearch = {}
 
 local function AlertSound()
     local kit = SOUNDKIT and (SOUNDKIT.UI_GROUP_FINDER_RECEIVE_APPLICATION or SOUNDKIT.RAID_WARNING or SOUNDKIT.READY_CHECK)
@@ -1250,34 +1695,48 @@ local function AlertSound()
 end
 
 -- Called whenever search results arrive (from Seeker's search, a keybinding, or the game's own).
-function ns.CheckNewMatches()
+-- searchKey: what the search covered (ns.SearchKey); a search Seeker didn't make has its own.
+function ns.CheckNewMatches(searchKey)
     local a = ns.db.alerts
+    searchKey = searchKey or "other"
+    local seen = seenBySearch[searchKey]
+    local primed = seen ~= nil
+    if not seen then
+        seen = {}
+        seenBySearch[searchKey] = seen
+    end
+    local getter = LFG.GetFilteredSearchResults or LFG.GetSearchResults
+    local all = {}
+    if getter then
+        local _, results = getter()
+        if type(results) == "table" then
+            for _, id in ipairs(results) do all[id] = true end
+        end
+    end
     local ok, groups, players = pcall(ns.GetFiltered)
     if not ok then return end
     local fresh = {}
     for _, list in ipairs({ groups, players }) do
         for _, e in ipairs(list) do
-            if not seen[e.id] then
-                seen[e.id] = true
-                if primed and not e.isSelf and (not a.fullXPOnly or e.xpStatus == "safe") then
-                    fresh[#fresh + 1] = e
-                end
+            if primed and not seen[e.id] and not e.isSelf and not e.isDelisted and not e.outsidePick and not e.fromChat
+                and (not a.fullXPOnly or e.xpStatus == "safe") then
+                fresh[#fresh + 1] = e
             end
         end
     end
-    primed = true
+    for id in pairs(all) do seen[id] = true end
     if not a.enabled or #fresh == 0 then return end
 
     local parts = {}
     for i = 1, math.min(3, #fresh) do
         local e = fresh[i]
         local act = e.xpActivity or RelevantActivities(e)[1]
-        local kind = e.isSolo and "player" or ("group %d/%d"):format(e.numMembers, e.maxPlayers)
-        parts[#parts + 1] = ("%s (%s, %s, lvl %s)"):format(ns.ShortName and ns.ShortName(e.leaderName) or e.leaderName or "?",
+        local kind = e.isSolo and L["player"] or (L["group %d/%d"]):format(e.numMembers, e.maxPlayers)
+        parts[#parts + 1] = (L["%s (%s, %s, lvl %s)"]):format(ns.ShortName and ns.ShortName(e.leaderName) or e.leaderName or "?",
             kind, act and ns.GetActivityName(act) or "?", e.maxLevel and tostring(e.maxLevel) or "?")
     end
-    local more = #fresh > 3 and (" and %d more"):format(#fresh - 3) or ""
-    ns.Print(("%d new: %s%s. |cff999999/seeker to open|r"):format(#fresh, table.concat(parts, ", "), more))
+    local more = #fresh > 3 and (L[" and %d more"]):format(#fresh - 3) or ""
+    ns.Print((L["%d new: %s%s. |cff999999/seeker to open|r"]):format(#fresh, table.concat(parts, ", "), more))
     if a.sound then AlertSound() end
     if a.flash and FlashClientIcon then FlashClientIcon() end
 end
@@ -1328,19 +1787,46 @@ function ns.Whisper(name, text)
     end
 end
 
--- The game only lets you invite solo players, and only when you can invite (solo, leader or assist).
-function ns.CanInvite(e)
-    if not e or not e.isSolo or e.isSelf then return false end
-    return not IsInGroup() or UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+-- Why you can't invite anyone right now, or nil when you can: only the leader or an assistant
+-- can invite, and a raid holds 40. A full party of five is fine: the game offers to convert it
+-- to a raid when you invite a sixth, as its own Invite button allows.
+function ns.InviteBlocker()
+    if not IsInGroup() then return nil end
+    if not (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")) then
+        return L["Only the leader or an assistant can invite."]
+    end
+    if IsInRaid and IsInRaid() and (GetNumGroupMembers() or 0) >= 40 then
+        return L["Your raid is full."]
+    end
+    return nil
 end
 
-function ns.Invite(name)
+-- The game only lets you invite solo players, and only when you can invite (see InviteBlocker).
+function ns.CanInvite(e)
+    if not e or not e.isSolo or e.isSelf then return false end
+    return ns.InviteBlocker() == nil
+end
+
+-- viaPopup: invite as the game's Who list does (UnitPopupSharedUtil.TryInvite, which handles the
+-- game's own invite rules and confirmations), else as its Browse page does (InviteUnit).
+function ns.Invite(name, viaPopup)
     if not name then return end
+    local blocker = ns.InviteBlocker()
+    if blocker then
+        ns.Print(blocker)
+        return false
+    end
+    if ns.MarkContact then ns.MarkContact(name, "invited") end -- cards show it, then the answer
+    if viaPopup and UnitPopupSharedUtil and UnitPopupSharedUtil.TryInvite then
+        local ok = pcall(UnitPopupSharedUtil.TryInvite, { name = name }, "INVITE", name)
+        if ok then return true end
+    end
     if C_PartyInfo and C_PartyInfo.InviteUnit then
         C_PartyInfo.InviteUnit(name)
     elseif InviteUnit then
         InviteUnit(name)
     end
+    return true
 end
 
 -- Forever has no applications: you ask the leader. This opens a whisper with a request ready to
@@ -1348,28 +1834,28 @@ end
 ---------------------------------------------------------------------------
 -- Message templates (Request to join, and the optional whisper sent with an invite)
 ---------------------------------------------------------------------------
-ns.DEFAULT_REQUEST_MESSAGE = "Hi! Could I join you for [dungeon]? I'm a level [level] [class] ([roles])."
+ns.DEFAULT_REQUEST_MESSAGE = L["Hi! Could I join you for [dungeon]? I'm a level [level] [class] ([roles])."]
 ns.DEFAULT_INVITE_MESSAGE = "" -- empty: inviting sends no whisper, as the game's Invite
 ns.MAX_WHISPER = 255
 
 -- The placeholders, in the order the Messages window lists them.
 ns.MESSAGE_TOKENS = {
-    { "level", "your level" },
-    { "class", "your class" },
-    { "roles", "the roles you've ticked, e.g. Tank/Healer" },
-    { "dungeon", "the dungeon they're listed for" },
-    { "name", "your name" },
-    { "target", "their name" },
-    { "zone", "the zone you're in" },
+    { "level", L["your level"] },
+    { "class", L["your class"] },
+    { "roles", L["the roles you've ticked, e.g. Tank/Healer"] },
+    { "dungeon", L["the dungeon they're listed for"] },
+    { "name", L["your name"] },
+    { "target", L["their name"] },
+    { "zone", L["the zone you're in"] },
 }
 
 local function MyRoles()
     local roles = {}
     local r = C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles()
     if r then
-        if r.tank then roles[#roles + 1] = TANK or "Tank" end
-        if r.healer then roles[#roles + 1] = HEALER or "Healer" end
-        if r.dps then roles[#roles + 1] = DAMAGER or "DPS" end
+        if r.tank then roles[#roles + 1] = TANK or L["Tank"] end
+        if r.healer then roles[#roles + 1] = HEALER or L["Healer"] end
+        if r.dps then roles[#roles + 1] = DAMAGER or L["DPS"] end
     end
     return table.concat(roles, "/")
 end
@@ -1384,7 +1870,7 @@ function ns.RenderMessage(template, e)
         class = UnitClass("player") or "",
         roles = MyRoles(),
         dungeon = act and ns.GetActivityName(act) or "",
-        name = UnitName("player") or "",
+        name = ns.UnitFullName("player") or "",
         target = e and ns.ShortName and ns.ShortName(e.leaderName) or (e and e.leaderName) or "",
         zone = GetRealZoneText and GetRealZoneText() or "",
     }
@@ -1394,8 +1880,20 @@ function ns.RenderMessage(template, e)
     end)
     text = text:gsub("%(%s*%)", ""):gsub("%[%s*%]", ""):gsub("  +", " "):gsub("%s+([%.,!?])", "%1")
     text = strtrim(text)
-    if #text > ns.MAX_WHISPER then text = text:sub(1, ns.MAX_WHISPER) end
-    return text
+    return ns.TrimToBytes(text, ns.MAX_WHISPER)
+end
+
+-- Cut text to at most this many bytes without splitting a character (UTF-8: a character's
+-- continuation bytes are 0x80-0xBF, so step back off them), as a whisper can't carry half of one.
+function ns.TrimToBytes(text, maxBytes)
+    if #text <= maxBytes then return text end
+    local cut = maxBytes
+    while cut > 0 do
+        local nextByte = text:byte(cut + 1)
+        if not nextByte or nextByte < 0x80 or nextByte > 0xBF then break end
+        cut = cut - 1
+    end
+    return text:sub(1, cut)
 end
 
 function ns.RequestMessage()
@@ -1412,23 +1910,51 @@ end
 function ns.RequestToJoin(e)
     if not e or not e.leaderName then return end
     ns.Whisper(e.leaderName, ns.RenderMessage(ns.RequestMessage(), e))
+    if ns.MarkContact then ns.MarkContact(e.leaderName, "requested") end
 end
 
 -- Invite a listed player, and whisper them your invite message if you've set one. The click is
 -- what sends it, as the invite itself.
 function ns.InviteListed(e)
     if not e or not e.leaderName then return end
-    ns.Invite(e.leaderName)
+    if not ns.Invite(e.leaderName) then return end
     local msg = ns.RenderMessage(ns.InviteMessage(), e)
     if msg ~= "" and SendChatMessage then
         local ok, err = pcall(SendChatMessage, msg, "WHISPER", nil, e.leaderName)
-        if not ok then ns.Print("Couldn't send your invite message: " .. tostring(err)) end
+        if not ok then ns.Print(L["Couldn't send your invite message: "] .. tostring(err)) end
     end
+end
+
+-- Whether you can use the group finder at all (the game refuses to open its window otherwise,
+-- e.g. below the level it needs). Returns true, or false and the game's reason.
+function ns.CanUseGroupFinder()
+    if not (C_LFGInfo and C_LFGInfo.CanPlayerUsePremadeGroup) then return true end
+    local ok, canUse, reason = pcall(C_LFGInfo.CanPlayerUsePremadeGroup)
+    if not ok or canUse ~= false then return true end
+    if type(reason) ~= "string" or reason == "" then
+        reason = L["You can't use the group finder yet."]
+    end
+    return false, reason
+end
+
+-- The game's own group finder loads on demand, the first time its window opens. Seeker borrows its
+-- description box and can open its window, so it loads it itself (out of combat, as loading a
+-- part of the game's interface then is safest).
+local NATIVE_ADDON = "Blizzard_GroupFinder_VanillaStyle"
+function ns.LoadNativeFinder()
+    if _G.LFGListingComment then return true end
+    local isLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+    if isLoaded and isLoaded(NATIVE_ADDON) then return true end
+    if InCombatLockdown and InCombatLockdown() then return false end
+    local load = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
+    if not load then return false end
+    local ok, loaded = pcall(load, NATIVE_ADDON)
+    return ok and loaded and true or false
 end
 
 function ns.ReportListing(e, advertisement)
     if not (ReportInfo and ReportFrame and Enum.ReportType and Enum.ReportType.GroupFinderPosting) then
-        ns.Print("Reporting isn't available here.")
+        ns.Print(L["Reporting isn't available here."])
         return
     end
     local ok, err = pcall(function()
@@ -1443,7 +1969,7 @@ function ns.ReportListing(e, advertisement)
             ReportFrame:InitiateReport(info, e.leaderName)
         end
     end)
-    if not ok then ns.Print("Couldn't open the report: " .. tostring(err)) end
+    if not ok then ns.Print(L["Couldn't open the report: "] .. tostring(err)) end
 end
 
 ---------------------------------------------------------------------------
@@ -1456,14 +1982,14 @@ function ns.DebugDump()
         "GetSearchResultMemberCounts", "CreateListing", "UpdateListing", "RemoveListing", "GetActiveEntryInfo" }) do
         ns.Print("  C_LFGList." .. fn .. ":", has(fn))
     end
-    ns.Print("  Comment box:", _G.LFGListingComment and "found" or "not loaded")
-    ns.Print("  Game LFG windows found:", #(ns.nativeFound or {}) > 0 and table.concat(ns.nativeFound, ", ") or "none yet")
-    ns.Print("  Replace mode:", ns.db.replaceNative and "on" or "off")
-    ns.Print("  Listed:", ns.HasListing() and "yes" or "no")
+    ns.Print(L["  Comment box:"], _G.LFGListingComment and "found" or L["not loaded"])
+    ns.Print(L["  Game LFG windows found:"], #(ns.nativeFound or {}) > 0 and table.concat(ns.nativeFound, ", ") or L["none yet"])
+    ns.Print(L["  Replace mode:"], ns.db.replaceNative and "on" or "off")
+    ns.Print(L["  Listed:"], ns.HasListing() and "yes" or "no")
     local getter = LFG.GetFilteredSearchResults or LFG.GetSearchResults
     if not getter then return end
     local total, results = getter()
-    ns.Print("Results:", tostring(total))
+    ns.Print(L["Results:"], tostring(total))
     local id = results and results[1]
     if not id then return end
     local info = LFG.GetSearchResultInfo(id)

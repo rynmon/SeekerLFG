@@ -1,8 +1,8 @@
 name: Build and release
 
 # Every push and pull request: syntax-check the Lua and make sure the TOC version has notes in
-# Changelog.lua. Pushing a tag like v0.9.0 also builds SeekerLFG-0.9.0.zip and publishes a
-# GitHub release with it. (No CurseForge upload yet.)
+# Changelog.lua. Pushing a tag like v1.0.0 also builds SeekerLFG-1.0.0.zip, publishes a GitHub
+# release with it, and uploads it to CurseForge (see the CurseForge step for what it needs).
 
 on:
   push:
@@ -20,20 +20,26 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Lua 5.1
-        run: sudo apt-get update -q && sudo apt-get install -y -q lua5.1
+      - name: Install Lua 5.1 and luacheck
+        run: sudo apt-get update -q && sudo apt-get install -y -q lua5.1 lua-check
 
       - name: Syntax-check Lua files
         run: |
-          for file in *.lua .github/scripts/*.lua; do
+          for file in *.lua Libs/*/*.lua .github/scripts/*.lua; do
             luac5.1 -p "$file"
           done
+
+      - name: No undefined or stray globals (luacheck)
+        # Globals only (11x: set / mutated / undefined, 12x: read-only ones changed): a misspelt
+        # game function or a missing `local` fails the build. .luacheckrc lists the game's globals.
+        run: luacheck *.lua --only 11 12
 
       - name: Every Lua file the TOC loads exists
         run: |
           missing=0
           while IFS= read -r line; do
-            line=$(printf '%s' "$line" | tr -d '\r')
+            # The TOC uses the game's backslashes (Libs\LibStub\LibStub.lua): check them as paths.
+            line=$(printf '%s' "$line" | tr -d '\r' | tr '\134' '/')
             case "$line" in ""|"#"*) continue ;; esac
             if [ ! -f "$line" ]; then
               echo "::error::SeekerLFG.toc loads $line, which doesn't exist"
@@ -54,6 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
+    env:
+      # CurseForge: an API token (curseforge.com > My API Tokens) as the CF_API_KEY repository
+      # secret. Without it, or without ## X-Curse-Project-ID in the TOC, the upload is skipped.
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -94,3 +104,45 @@ jobs:
           case "$VERSION" in *alpha*|*beta*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" "dist/SeekerLFG-$VERSION.zip" \
             --title "Seeker LFG $VERSION" --notes-file release-notes.md $prerelease
+
+      - name: CurseForge upload
+        # The same zip and notes, to the project in the TOC's ## X-Curse-Project-ID, tagged for WoW
+        # Forever. The game version is CurseForge's newest WoW Forever one, unless the
+        # CF_GAME_VERSION_ID repository variable names one.
+        if: env.CF_API_KEY != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CF_GAME_VERSION_ID: ${{ vars.CF_GAME_VERSION_ID }}
+        run: |
+          project=$(sed -n 's/^## X-Curse-Project-ID: *//p' SeekerLFG.toc | tr -d '\r')
+          if [ -z "$project" ]; then
+            echo "::warning::No ## X-Curse-Project-ID in SeekerLFG.toc: not uploading to CurseForge"
+            exit 0
+          fi
+          api=https://wow.curseforge.com/api
+          gameVersion="$CF_GAME_VERSION_ID"
+          if [ -z "$gameVersion" ]; then
+            types=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" "$api/game/version-types")
+            type=$(printf '%s' "$types" | jq -r '[.[] | select(((.name // "") + " " + (.slug // "")) | ascii_downcase | test("forever"))][0].id // empty')
+            if [ -z "$type" ]; then
+              echo "::error::CurseForge has no WoW Forever game version type. Set the CF_GAME_VERSION_ID repository variable to the right game version ID."
+              printf '%s' "$types" | jq -r '.[] | "\(.id)  \(.name)  \(.slug)"'
+              exit 1
+            fi
+            gameVersion=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" "$api/game/versions" \
+              | jq -r --argjson t "$type" '[.[] | select(.gameVersionTypeID == $t)] | max_by(.id) | .id // empty')
+            if [ -z "$gameVersion" ]; then
+              echo "::error::No WoW Forever game versions on CurseForge (type $type). Set CF_GAME_VERSION_ID."
+              exit 1
+            fi
+          fi
+          releaseType=release
+          case "$VERSION" in *alpha*) releaseType=alpha ;; *beta*) releaseType=beta ;; esac
+          metadata=$(jq -n --rawfile changelog release-notes.md --arg name "Seeker LFG $VERSION" \
+            --arg type "$releaseType" --argjson gv "$gameVersion" \
+            '{changelog: $changelog, changelogType: "markdown", displayName: $name, gameVersions: [$gv], releaseType: $type}')
+          echo "Uploading to CurseForge project $project, game version $gameVersion ($releaseType)"
+          curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" \
+            --form-string "metadata=$metadata" \
+            -F "file=@dist/SeekerLFG-$VERSION.zip" \
+            "$api/projects/$project/upload-file"

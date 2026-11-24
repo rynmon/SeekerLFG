@@ -2,15 +2,25 @@
 ## Title: Seeker LFG
 ## Notes: Looking for Group for WoW Forever, groups and players side by side, with filters that keep your dungeon runs earning XP.
 ## Author: rynmon
-## Version: 0.9.6
+## X-License: MIT
+## Version: 1.0.0
 ## SavedVariables: SeekerLFGDB
+## SavedVariablesPerCharacter: SeekerLFGCharDB
 ## OptionalDeps: WhisperMessenger
 ## IconTexture: Interface\LFGFrame\UI-LFG-PORTRAIT
 ## AddonCompartmentFunc: SeekerLFG_OnAddonCompartmentClick
 ## AddonCompartmentFuncOnEnter: SeekerLFG_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: SeekerLFG_OnAddonCompartmentLeave
 
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+Locale.lua
 Core.lua
+Social.lua
+Chat.lua
+Setups.lua
 UI.lua
 Listing.lua
 Who.lua

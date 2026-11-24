@@ -7,6 +7,57 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "1.0.0",
+		date = "24 November 2026",
+		sections = {
+			{ "New", {
+				{ "Groups and players from chat.", "Groups (LFM) and players (LFG) posting in chat channels for a dungeon now appear beside the group finder's listings, marked chat, with the same filters: \"LF2M SM Arm need heal\" shows as a group for the Scarlet Armory needing a healer. Their level and zone are found with the map button on their card. Cog > Chat posts switches it off, keeps it to the LookingForGroup channel, or announces new ones. English messages only." },
+				{ "See whom you've asked.", "Cards now say when you've asked a group to join or invited a player (\"Requested 2m ago\"), and what came of it: replied, declined, already in a group, or joined." },
+				{ "Fill my group.", "For leaders: one click (cog menu, your party card, or /seeker fill) shows the players who play the roles your group is missing, with full XP for it." },
+				{ "Keep results fresh.", "Once results are 30 seconds old, your next click or key press with the window open searches again, so the lists stay current while you play. Cog > Keep results fresh switches it off." },
+				{ "Notes on players.", "Right-click a card > Add a note (\"great tank\"): it shows on their cards and tooltips, wherever they turn up. /seeker note works too." },
+				{ "Filter setups.", "Save your filters as a setup (\"Tanking on my warrior\") and switch back to it in one click: cog menu > Filter setups, or /seeker setup." },
+				{ "Each character its own.", "What you browse (category and activities) and the level and role filters are now kept per character, so an alt doesn't open on your main's dungeons." },
+				{ "Hide players.", "Right-click a listing > Hide to stop seeing that player's listings. Cog > Hidden lists everyone you've hidden; click a name to show them again. Players on your ignore list are hidden too (switch it off in Cog > Hidden)." },
+				{ "Hide by word.", "Hide listings whose title or note mentions words you pick, such as \"wts, boost\": Options > AddOns > Seeker LFG, or /seeker hidewords." },
+				{ "Sort Who by any column.", "Click a column heading on the Who page to sort by it, and again to reverse. The Who page's filters and sort are now kept between sessions, and Filter > Clear all filters resets them." },
+				{ "Minimap button collectors and broker bars.", "Seeker's minimap button is now a standard one (LibDBIcon), so addons that gather minimap buttons into one bar pick it up, and Seeker shows in broker bars such as Titan Panel, ChocolateBar and Bazooka (click to open, right-click for options, and it says when you're listed). It's still the game's LFG eye, and keeps its place on the minimap." },
+				{ "/seeker help.", "Lists every command. A command Seeker doesn't know now says so instead of opening the window." },
+				{ "Ready for translations.", "All of Seeker's own text can now be translated (Locale.lua). It uses the game's wording wherever the game has it." },
+			} },
+			{ "The window", {
+				{ "Taller window, more cards.", "The corner grip now makes the window taller, so both lists show more cards; Ctrl + mouse wheel still scales everything. /seeker reset puts it back." },
+				{ "No more cut-off bottom line.", "When it doesn't fit, the bottom line drops its least important parts first (your keybind, then your party) instead of cutting off the end, and hovering it shows all of it." },
+				{ "More room on cards.", "A card's buttons are shorter and sit beside its third line, so the dungeon and where the leader is stay readable while you point at it, and long names no longer run into a raid's role counts." },
+				{ "One empty list, one wide list.", "When there are no groups (or no players), the other list takes the room." },
+				{ "Easier to read.", "Greyed-out cards are greyed text and icons rather than faded, so they're still readable, and an option shows XP as a tick, question mark or cross beside the colour (Cog menu or Options), for when green and red are hard to tell apart." },
+				{ "Smaller fixes.", "The side tabs never go off the screen's edge, a long warning on the List yourself page stays on one line (hover it for the rest), card tooltips say what right-click does, and the Who page's sorted column shows the game's own sort arrow." },
+			} },
+			{ "Like the game's own window", {
+				{ "Each activity's own display.", "Rows show a listing's party the way the game shows that activity: its note (for activities listed by description), a player count, class icons, role counts or role seats, or nothing." },
+				{ "The game's order.", "A new sort, Best fit for my roles: groups with a seat for a role you play first, then bigger groups, then ones needing a tank or healer; and players who fill a role your party lacks. Best XP first now uses it to break ties." },
+				{ "The game's activity groups.", "Cog > Group activities by: the game's own groups (with one box to tick a whole group) or, as before, what they'd give you in XP. It applies to the Browse activity menu and the List yourself page." },
+				{ "Delisted listings.", "A listing taken down since your search stays in the list, greyed out at the bottom and marked Delisted, instead of vanishing. Cog > Sort > Grey out listings outside the picked activities keeps those too, as the game does." },
+				{ "Your listing's activities.", "Listings that share activities with yours name only those, in blue, and tooltips group activities as the game does with yours in blue. The minimap tooltip groups them too and shows your description." },
+				{ "When you can't use the group finder.", "When the game doesn't let you use the group finder yet (your level, for example), Seeker says why instead of opening, as the game's window does. The Who tab still opens." },
+				{ "Who list details.", "Hover a Who row whose name, zone or guild is cut off to see it in full." },
+			} },
+			{ "Fixed", {
+				{ "Member locations, when you ask.", "Where a group's members are is now looked up only for the groups you ask about: point at a card and click its map button. It checks the group's zone first (one /who that usually finds everyone gathered there), then each member by their first name (the name /who knows them by), trying again when the game drops a lookup; the rest run as you click or press keys with Seeker open. Searching no longer looks up every member of every group. Tooltips say whether a member is being looked up, queued, or wasn't found (offline, or hidden from /who)." },
+				{ "Alerts after changing category.", "Switching category (or loosening a filter) announced every listing as new. Each search now has its own memory, so only listings that turn up later are announced." },
+				{ "Who results replaced.", "Coming back to the Who tab could show a single player from a background member lookup instead of your search. The page now keeps your results." },
+				{ "No more opening the game's window first.", "The description box, Open the game's Looking for Group window, and searching your new listing all needed the game's window opened once. Seeker now loads it itself." },
+				{ "Placeholders from the buttons.", "Clicking a placeholder in Messages put it in the box but didn't save it unless you typed something too." },
+				{ "Playstyle while listed.", "The game doesn't change a listing's playstyle, so the dropdown is now greyed out while you're listed instead of seeming to work." },
+				{ "Your party's level everywhere.", "The activity menu, the status line and the List yourself warnings now judge XP by your party's highest level, as the lists already did." },
+				{ "Unsaved listing changes.", "Switching tabs while listed no longer throws away changes you haven't posted." },
+				{ "Your own /who.", "A /who you type while Seeker is looking someone up now answers in chat as usual." },
+				{ "Invite.", "Invite is greyed out, saying why, when you can't invite (not the leader or an assistant) or your raid is full. Inviting a sixth player offers to turn your party into a raid, as the game does. The Who page invites the way the game's Who list does." },
+				{ "Smaller fixes.", "[name] in messages is your full name; long messages are never cut mid-character; expired lockouts no longer count as saved; the Search again key picks Dungeons first, as the window does; the cog's tooltip lists what's in it." },
+			} },
+		},
+	},
+	{
 		version = "0.9.6",
 		date = "24 November 2026",
 		sections = {
