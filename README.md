@@ -4,7 +4,7 @@
 
 Seeker LFG replaces Forever's Looking for Group window with one that looks and feels like the game's own, but shows far more. It also does everything the game's window does, so you never need to open that window again.
 
-![Groups and players side by side, with the filters open](assets/screenshots/browse.png)
+![Groups and players side by side, with the filters open](https://raw.githubusercontent.com/rynmon/SeekerLFG/main/assets/screenshots/browse.png)
 
 *Browsing for your own listing's dungeon: your party at the top, groups already inside the dungeon marked, levels coloured by the XP you'd get.*
 
@@ -34,13 +34,13 @@ Seeker LFG replaces Forever's Looking for Group window with one that looks and f
 
 ## List yourself
 
-![Listing your group](assets/screenshots/listing.png)
+![Listing your group](https://raw.githubusercontent.com/rynmon/SeekerLFG/main/assets/screenshots/listing.png)
 
 *Listing a group of three: pick a category, your role and a playstyle, and see how others will see you.*
 
 Pick a category, tick what you're listing for, and choose a playstyle, voice chat, a description, your roles and "new player friendly". A preview shows how other players will see your listing. When you're in a group, you get the role dropdown and a role check, and only the leader can change the listing.
 
-![Choosing activities, sorted by what they'd give you in XP](assets/screenshots/listing-activities.png)
+![Choosing activities, sorted by what they'd give you in XP](https://raw.githubusercontent.com/rynmon/SeekerLFG/main/assets/screenshots/listing-activities.png)
 
 *Activities grouped by XP for you, with each one's level range.*
 
@@ -70,7 +70,7 @@ A /who search with class, race and zone filters, and an invite button for each p
 
 Install it from CurseForge (the CurseForge app, with WoW Forever picked), or by hand:
 
-1. Download `SeekerLFG-x.y.z.zip` from [Releases](../../releases).
+1. Download `SeekerLFG-x.y.z.zip` from [Releases](https://github.com/rynmon/SeekerLFG/releases).
 2. Unzip it into `World of Warcraft\_forever_\Interface\AddOns\` so that you have an `AddOns\SeekerLFG` folder.
 3. Restart the game, then type `/seeker`.
 
@@ -113,4 +113,4 @@ Install it from CurseForge (the CurseForge app, with WoW Forever picked), or by 
 
 ## Bugs and ideas
 
-Open an [issue](../../issues). For bugs, include the output of `/seeker selftest`.
+Open an [issue](https://github.com/rynmon/SeekerLFG/issues). For bugs, include the output of `/seeker selftest`.
