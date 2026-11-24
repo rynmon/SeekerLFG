@@ -8,7 +8,7 @@ local _, ns = ...
 ns.CHANGELOG = {
 	{
 		version = "0.9.6",
-		date = "21 November 2026",
+		date = "24 November 2026",
 		sections = {
 			{ "Changed", {
 				{ "Colour-coded locations.", "Every member's zone in a tooltip is now coloured for the group's dungeon: green with the dungeon's icon when they're inside it, white on the same continent, red on another continent." },
