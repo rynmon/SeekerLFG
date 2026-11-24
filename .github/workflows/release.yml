@@ -61,9 +61,9 @@ jobs:
     permissions:
       contents: write # create the GitHub release
     env:
-      # CurseForge: an API token (curseforge.com > My API Tokens) as the CF_API_KEY repository
+      # CurseForge: an API token (curseforge.com > My API Tokens) as the CF_API_TOKEN repository
       # secret. Without it, or without ## X-Curse-Project-ID in the TOC, the upload is skipped.
-      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
@@ -109,7 +109,7 @@ jobs:
         # The same zip and notes, to the project in the TOC's ## X-Curse-Project-ID, tagged for WoW
         # Forever. The game version is CurseForge's newest WoW Forever one, unless the
         # CF_GAME_VERSION_ID repository variable names one.
-        if: env.CF_API_KEY != ''
+        if: env.CF_API_TOKEN != ''
         env:
           VERSION: ${{ steps.version.outputs.version }}
           CF_GAME_VERSION_ID: ${{ vars.CF_GAME_VERSION_ID }}
@@ -122,14 +122,14 @@ jobs:
           api=https://wow.curseforge.com/api
           gameVersion="$CF_GAME_VERSION_ID"
           if [ -z "$gameVersion" ]; then
-            types=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" "$api/game/version-types")
+            types=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_TOKEN" "$api/game/version-types")
             type=$(printf '%s' "$types" | jq -r '[.[] | select(((.name // "") + " " + (.slug // "")) | ascii_downcase | test("forever"))][0].id // empty')
             if [ -z "$type" ]; then
               echo "::error::CurseForge has no WoW Forever game version type. Set the CF_GAME_VERSION_ID repository variable to the right game version ID."
               printf '%s' "$types" | jq -r '.[] | "\(.id)  \(.name)  \(.slug)"'
               exit 1
             fi
-            gameVersion=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" "$api/game/versions" \
+            gameVersion=$(curl -sS --fail-with-body -H "X-Api-Token: $CF_API_TOKEN" "$api/game/versions" \
               | jq -r --argjson t "$type" '[.[] | select(.gameVersionTypeID == $t)] | max_by(.id) | .id // empty')
             if [ -z "$gameVersion" ]; then
               echo "::error::No WoW Forever game versions on CurseForge (type $type). Set CF_GAME_VERSION_ID."
@@ -142,7 +142,7 @@ jobs:
             --arg type "$releaseType" --argjson gv "$gameVersion" \
             '{changelog: $changelog, changelogType: "markdown", displayName: $name, gameVersions: [$gv], releaseType: $type}')
           echo "Uploading to CurseForge project $project, game version $gameVersion ($releaseType)"
-          curl -sS --fail-with-body -H "X-Api-Token: $CF_API_KEY" \
+          curl -sS --fail-with-body -H "X-Api-Token: $CF_API_TOKEN" \
             --form-string "metadata=$metadata" \
             -F "file=@dist/SeekerLFG-$VERSION.zip" \
             "$api/projects/$project/upload-file"

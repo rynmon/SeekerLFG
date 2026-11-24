@@ -47,7 +47,7 @@ If the tag doesn't match the TOC version, the release fails, so the two can't dr
 The upload needs, once:
 
 - `## X-Curse-Project-ID: <id>` in `SeekerLFG.toc` (the number in the project's About box on CurseForge).
-- A CurseForge API token (curseforge.com > your avatar > My API Tokens) saved as the `CF_API_KEY` secret in the GitHub repository (Settings > Secrets and variables > Actions).
+- A CurseForge API token (curseforge.com > your avatar > My API Tokens) saved as the `CF_API_TOKEN` secret in the GitHub repository (Settings > Secrets and variables > Actions).
 
 It tags the file for CurseForge's newest WoW Forever game version. To choose another, set the `CF_GAME_VERSION_ID` repository variable to its ID; if the upload can't find a WoW Forever version, its log lists the game version types CurseForge has. Without the token or the project ID, the upload is skipped and the GitHub release still goes out.
 
