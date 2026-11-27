@@ -1443,10 +1443,10 @@ end
 -- The game's tooltip is see-through, so whatever's behind it (another addon's frames, the
 -- world) shows through its text. Seeker's listing tooltip gets a solid background while it
 -- shows; the game's own style comes back as soon as it hides or anything else takes the tooltip.
-local solidHooked
+local solidHooked, solidShown -- (kept here, not on the game's tooltip: writing to its frame can taint it)
 local function RestoreTooltipStyle(self)
-    if not self.seekerSolid then return end
-    self.seekerSolid = nil
+    if not solidShown then return end
+    solidShown = false
     if GameTooltip_SetBackdropStyle and GAME_TOOLTIP_BACKDROP_STYLE_DEFAULT then
         pcall(GameTooltip_SetBackdropStyle, self, GAME_TOOLTIP_BACKDROP_STYLE_DEFAULT)
     elseif self.NineSlice and TOOLTIP_DEFAULT_BACKGROUND_COLOR then
@@ -1463,7 +1463,7 @@ local function MakeTooltipSolid()
         pcall(GameTooltip.HookScript, GameTooltip, "OnTooltipCleared", RestoreTooltipStyle)
     end
     nine:SetCenterColor(0.03, 0.03, 0.05, 0.97)
-    GameTooltip.seekerSolid = true
+    solidShown = true
 end
 
 function ns.ShowEntryTooltip(owner, e)
