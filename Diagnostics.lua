@@ -39,6 +39,7 @@ local FUNCTIONS = {
     "C_LFGListRoles.GetRoles", "C_LFGListRoles.SetRoles", "C_LFGListRoles.GetSavedRoles",
     "C_FriendList.SendWho", "C_FriendList.GetWhoInfo", "C_FriendList.GetNumWhoResults", "C_FriendList.SetWhoToUi",
     "C_PartyInfo.InviteUnit", "C_Map.GetMapInfo", "C_Map.GetMapChildrenInfo",
+    "GetSavedInstanceInfo", "RequestRaidInfo", "GetPlayerInfoByGUID", "IsInInstance", "GetInstanceInfo",
     "MenuUtil.CreateContextMenu", "Settings.RegisterCanvasLayoutCategory", "GetGeneralPlaystyleString",
 }
 

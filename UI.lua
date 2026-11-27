@@ -20,6 +20,9 @@ local LISTS_TOP_CLOSED = FILTER_TOP
 local LISTS_BOTTOM = 26
 local EDGE, GAP = 5, 8
 local HEADER_H, ROW_H = 36, 56   -- the game's category bar, and three-line search entries
+-- Compact cards: two lines (the extras join line 2), the buttons still clearing the party seats.
+local ROW_H_COMPACT = 44
+local function RowHeight() return ns.db and ns.db.compactCards and ROW_H_COMPACT or ROW_H end
 local SCROLL_W = 6
 local SLOT = 22
 -- A card's buttons: short and low, beside line 3 (the card's 56px: name to 23, line 2 to 37).
@@ -61,7 +64,7 @@ local function ResetFontColor(fs)
 end
 
 local function ApplyDim(row, item)
-    local dim = item.isDelisted or item.outsidePick
+    local dim = item.isDelisted or item.outsidePick or item.lockedOut
     if row.icon then row.icon:SetDesaturated(dim and true or false) end
     for _, fs in ipairs({ row.sub, row.line3, row.raid }) do
         if fs then
@@ -78,6 +81,7 @@ local function ApplyDim(row, item)
     row.level:SetTextColor(0.45, 0.45, 0.45)
     for _, s in ipairs(row.slots or row.roleSlots or {}) do
         if s:IsShown() then s.icon:SetDesaturated(true) end
+        if s.glow then s.glow:Hide() s.mine:Hide() end
     end
 end
 
@@ -444,6 +448,7 @@ end
 
 local function SetSlot(s, role, empty)
     s:Show()
+    if s.glow then s.glow:Hide() s.mine:Hide() end
     s.icon:SetVertexColor(1, 1, 1, 1)
     s.icon:SetDesaturated(false)
     s.icon:SetTexCoord(0, 1, 0, 1)
@@ -463,11 +468,35 @@ end
 -- A party slot showing a member's class, for listings the game shows by class (ClassEnumerate).
 local function SetClassSlot(s, classFile)
     s:Show()
+    if s.glow then s.glow:Hide() s.mine:Hide() end
     s.icon:SetVertexColor(1, 1, 1, 1)
     s.icon:SetDesaturated(false)
     s.icon:SetTexCoord(0, 1, 0, 1)
     local atlas = "groupfinder-icon-class-" .. classFile:lower()
     if HasAtlas(atlas) then s.icon:SetAtlas(atlas) else SetClassIcon(s.icon, classFile) end
+end
+
+-- An open seat you could take: still the game's empty seat (so it never reads as someone
+-- already in it), with a small icon of your role inside and a soft round green glow.
+local function MarkSeat(s, role)
+    SetSlot(s, nil, true)
+    if not s.glow then
+        s.glow = s:CreateTexture(nil, "BACKGROUND")
+        s.glow:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        s.glow:SetBlendMode("ADD")
+        s.glow:SetPoint("CENTER")
+        s.glow:SetSize(SLOT * 1.6, SLOT * 1.6)
+        s.glow:SetVertexColor(0.3, 1, 0.3, 1)
+        s.mine = s:CreateTexture(nil, "OVERLAY")
+        s.mine:SetPoint("CENTER")
+        s.mine:SetSize(math.floor(SLOT * 0.78), math.floor(SLOT * 0.78))
+    end
+    -- The open seat's ring in green, your role clear inside it.
+    s.icon:SetVertexColor(0.45, 1, 0.45, 1)
+    s.mine:SetDesaturated(false)
+    s.mine:SetAlpha(1)
+    if ApplyRole(s.mine, role) then s.mine:Show() else s.mine:Hide() end
+    s.glow:Show()
 end
 
 -- A small icon button (whisper bubble).
@@ -611,10 +640,7 @@ local function CreatePane(parent, spec)
     f.empty:SetText(spec.emptyText)
 
     local function MakeRow(i)
-        local row = CreateFrame("Button", nil, f)
-        row:SetHeight(ROW_H)
-        row:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -top - (i - 1) * ROW_H)
-        row:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(SCROLL_W + 4), -top - (i - 1) * ROW_H)
+        local row = CreateFrame("Button", nil, f) -- sized and placed by f:Layout
         row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         -- The game's search entry card (common-button-list-mid2) and its hover, inset as there.
         local card = row:CreateTexture(nil, "BACKGROUND")
@@ -667,6 +693,17 @@ local function CreatePane(parent, spec)
         -- the buttons show (you're pointing at the card), they end where the buttons begin.
         function row:LayoutText(buttonsShown)
             if not (self.line3 and self.rightEdge) then return end
+            if self.compact then
+                -- Two lines: the buttons sit beside line 2, which holds the extras too.
+                self.line3:Hide()
+                if buttonsShown then
+                    self.sub:SetPoint("RIGHT", self.rightEdge, "LEFT", -6, 0)
+                else
+                    self.sub:SetPoint("RIGHT", self.corner, "LEFT", -8, 0)
+                end
+                return
+            end
+            self.line3:Show()
             -- The buttons sit beside line 3 only (they're short and low), so line 2, the dungeon
             -- and where the leader is, always keeps the card's full width.
             self.sub:SetPoint("RIGHT", self, "RIGHT", -10, 0)
@@ -706,8 +743,23 @@ local function CreatePane(parent, spec)
     end
 
     function f:Layout()
-        local n = max(1, floor((self:GetHeight() - top - 2) / ROW_H))
+        local h = RowHeight()
+        local compact = h ~= ROW_H
+        local n = max(1, floor((self:GetHeight() - top - 2) / h))
         for i = #self.rows + 1, n do self.rows[i] = MakeRow(i) end
+        for i = 1, n do
+            local row = self.rows[i]
+            if row.placedH ~= h then
+                row.placedH = h
+                row:SetHeight(h)
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", self, "TOPLEFT", 0, -top - (i - 1) * h)
+                row:SetPoint("TOPRIGHT", self, "TOPRIGHT", -(SCROLL_W + 4), -top - (i - 1) * h)
+                row.compact = compact
+                row.corner:SetPoint("BOTTOMRIGHT", -10, compact and 6 or 9)
+                row:LayoutText(false)
+            end
+        end
         self.numRows = n
         for i = n + 1, #self.rows do self.rows[i]:Hide() end
     end
@@ -764,7 +816,15 @@ end
 -- then the playstyle line; party (or roles) and actions on the right.
 
 -- Line 2's activity, coloured as the game colours it (your listing green, matches blue).
+local ActivityNameText
+local LOCK_ICON = "|TInterface\\EncounterJournal\\UI-EJ-WarningTextIcon:14:14|t "
 local function ActivityName(e)
+    local text = ActivityNameText(e)
+    -- A group for a raid or dungeon you're saved to: the game's lockout warning icon first.
+    if not e.isSelf and e.savedLocks and #e.savedLocks > 0 then text = LOCK_ICON .. text end
+    return text
+end
+ActivityNameText = function(e)
     if e.isSelf then
         local first = e.activityIDs and e.activityIDs[1]
         local who = e.isMyGroup and not e.isSolo and L["Your party"] or (LFG_SELF_LISTING or L["Your listing"])
@@ -810,16 +870,25 @@ end
 local function ExtrasText(e)
     local extras = {}
     -- Activities shown by their note (the game's Comment display): the note leads the line.
-    local note = e.info and e.info.comment
-    if IsDisplay(e, "Comment") and type(note) == "string" and note ~= "" then
-        extras[#extras + 1] = "|cffd0d0d0\"" .. (note:gsub("%s+", " ")) .. "\"|r"
-    end
+    local note = e.info and type(e.info.comment) == "string" and strtrim((e.info.comment:gsub("%s+", " "))) or ""
+    local noteText = note ~= "" and ("|cffd0d0d0\"" .. note .. "\"|r") or nil
+    local noteLeads = noteText and IsDisplay(e, "Comment")
+    if noteLeads then extras[#extras + 1] = noteText end
     local social = SocialText(e)
     if social ~= "" then extras[#extras + 1] = social end
     -- Whether you've asked them (or invited them) and what came of it, ahead of everything else.
     local contact = (not e.isSelf and ns.ContactText) and ns.ContactText(e.leaderName) or ""
     if contact ~= "" then table.insert(extras, 1, contact) end
     if not e.isSelf and ns.GetNote and ns.GetNote(e.leaderName) then extras[#extras + 1] = ns.NoteIcon(12) end
+    -- You've grouped with the leader (or anyone in the group) before.
+    if not e.isSelf and ns.GroupedWith then
+        local grouped = ns.GroupedWith(e.leaderName) ~= nil
+        for _, p in ipairs(e.members or {}) do
+            if grouped then break end
+            grouped = p.name and ns.GroupedWith(p.name) ~= nil
+        end
+        if grouped then extras[#extras + 1] = ns.GroupedIcon(12) end
+    end
     local info = e.info
     if info.generalPlaystyle and info.generalPlaystyle ~= 0 and GetGeneralPlaystyleString then
         local ok, s = pcall(GetGeneralPlaystyleString, info.generalPlaystyle)
@@ -831,17 +900,36 @@ local function ExtrasText(e)
     if Enum.LFGEntryVoiceMode and info.voiceMode == Enum.LFGEntryVoiceMode.Discord then
         extras[#extras + 1] = "|cff8c9eff" .. (VOICE_CHAT_MODE_DISCORD or L["Discord"]) .. "|r"
     end
+    -- Any other listing with a note: it ends the line, so you can see which ones have one.
+    if noteText and not noteLeads then extras[#extras + 1] = noteText end
     return table.concat(extras, "  ")
 end
 
--- The game's dungeon (or raid) entrance icon, as its world map shows it, for players inside one.
+-- A dungeon (or raid) icon for players inside one. The world map's entrance pin ("Dungeon") is
+-- a blur at text size, so the game's round dungeon badge (its world quest icon: a gateway on a
+-- disc) comes first, a little larger than the text and nudged down to sit on its line.
+local DUNGEON_ATLASES = {
+    dungeon = { "worldquest-icon-dungeon", "Dungeon" },
+    raid = { "worldquest-icon-raid", "Raid", "Dungeon" },
+}
 local function DungeonIcon(activityID, size, isRaid)
-    size = size or 14
+    size = (size or 14) + 4
     local a = activityID and ns.GetActivity(activityID)
-    local atlas = (isRaid or (a and a.maxNumPlayers and a.maxNumPlayers > 5)) and "Raid" or "Dungeon"
-    if HasAtlas(atlas) then return ("|A:%s:%d:%d|a"):format(atlas, size, size) end
-    if HasAtlas("Dungeon") then return ("|A:Dungeon:%d:%d|a"):format(size, size) end
-    return ("|TInterface\\Minimap\\Dungeon:%d:%d|t"):format(size, size)
+    local kind = (isRaid or (a and a.maxNumPlayers and a.maxNumPlayers > 5)) and "raid" or "dungeon"
+    for _, atlas in ipairs(DUNGEON_ATLASES[kind]) do
+        if HasAtlas(atlas) then return ("|A:%s:%d:%d:0:-2|a"):format(atlas, size, size) end
+    end
+    return ("|TInterface\\Minimap\\Dungeon:%d:%d:0:-2|t"):format(size, size)
+end
+
+-- Zones away from the dungeon's entrance, coloured from green (its zone) through yellow to
+-- orange (four or more), with how many: "Desolace (same zone)", "Tanaris (2 zones away)".
+local HOP_COLORS = { [0] = "|cff55ff55", "|cffb4ff55", "|cffffd100", "|cffff9933" }
+local function HopColor(hops) return HOP_COLORS[min(hops, 3)] or HOP_COLORS[3] end
+local function HopsText(zone, hops)
+    local n = hops == 0 and L["same zone"] or hops == 1 and L["1 zone away"] or (L["%d zones away"]):format(hops)
+    if hops >= 4 then return "|cffff6a33" .. zone .. " (" .. n .. ")|r" end
+    return HopColor(hops) .. zone .. " (" .. n .. ")|r"
 end
 
 -- Where the leader is, after the activity: red on the wrong continent, green at the dungeon.
@@ -866,6 +954,7 @@ local function WhereText(e)
         local continent = e.isSolo and e.continent or ns.GetZoneContinent(zone)
         return ("|cffff5555%s (%s)|r"):format(zone, continent or "?")
     end
+    if e.hops and ns.db.zoneHops ~= false then return HopsText(zone, e.hops) end
     return "|cffd0d0d0" .. zone .. "|r"
 end
 
@@ -887,6 +976,21 @@ local function BuildTextLines(row, rightEdge)
     row.level:ClearAllPoints()
     row.level:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
     row.level:SetJustifyH("LEFT")
+end
+
+-- Lines 2 and 3: the activity and where, then the extras (playstyle, description); compact
+-- cards put the extras at the end of line 2.
+local function SetCardLines(row, e)
+    local where = WhereText(e)
+    local sub = ActivityName(e) .. (where ~= "" and ("  " .. where) or "")
+    local extras = ExtrasText(e) or ""
+    if row.compact then
+        row.sub:SetText(extras ~= "" and (sub .. "   " .. extras) or sub)
+        row.line3:SetText("")
+    else
+        row.sub:SetText(sub)
+        row.line3:SetText(extras)
+    end
 end
 
 -- The name at its natural width, but never pushing the level into the party icons on the right.
@@ -954,9 +1058,7 @@ local function PopulateGroup(row, e)
     local leader = e.leader or {}
     SetRowName(row, ShortName(e.leaderName) or "?", 5 * (SLOT + 1) + 8)
     row.name:SetTextColor(ClassColor(leader.classFilename))
-    local where = WhereText(e)
-    row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
-    row.line3:SetText(ExtrasText(e))
+    SetCardLines(row, e)
     row.level:SetText(e.maxLevel and tostring(e.maxLevel) or "?")
     if e.maxPlayers > 5 or e.numMembers > 5 then
         row.corner:SetText(e.isSelf and L["listed"] or FormatAge(e.age)) -- the size is already in the role counts
@@ -1019,11 +1121,15 @@ DrawParty = function(row, e)
         end
     end
 
+    -- One of your roles they still have room for (the option is on by default).
+    local mine = not e.isMyGroup and ns.db.markMySeat ~= false and e.myFit and e.myFit[1]
+
     -- Role counts: the game's RoleCount display, and any group of more than five.
     if IsDisplay(e, "RoleCount") or e.maxPlayers > 5 or e.numMembers > 5 then
         local size = e.maxPlayers > 5 and ("%d/%d"):format(e.numMembers, e.maxPlayers) or tostring(e.numMembers)
         row.raid:SetText(("%s%d  %s%d  %s%d   |cffaaaaaa%s|r"):format(RoleMarkup("tank", 16), c.TANK or e.tanks,
-            RoleMarkup("healer", 16), c.HEALER or e.healers, RoleMarkup("dps", 16), c.DAMAGER or e.dps, size))
+            RoleMarkup("healer", 16), c.HEALER or e.healers, RoleMarkup("dps", 16), c.DAMAGER or e.dps, size)
+            .. (mine and ("   |cff55ff55+|r" .. RoleMarkup(mine, 16)) or ""))
         row.raid:Show()
         return
     end
@@ -1040,7 +1146,12 @@ DrawParty = function(row, e)
         if p then
             SetSlot(row.slots[i], ROLE_FROM_ASSIGNED[p.assignedRole])
         elseif i <= e.maxPlayers and i > e.numMembers then
-            SetSlot(row.slots[i], nil, true)
+            if mine then
+                MarkSeat(row.slots[i], mine)
+                mine = nil
+            else
+                SetSlot(row.slots[i], nil, true)
+            end
         elseif i <= e.numMembers then
             SetSlot(row.slots[i], nil) -- a member we got no details for
         else
@@ -1102,9 +1213,7 @@ local function PopulatePlayer(row, e)
     else
         row.icon:Hide()
     end
-    local where = WhereText(e)
-    row.sub:SetText(ActivityName(e) .. (where ~= "" and ("  " .. where) or ""))
-    row.line3:SetText(ExtrasText(e))
+    SetCardLines(row, e)
     row.level:SetText(p.level and tostring(p.level) or "?")
     row.corner:SetText(e.isSelf and L["listed"] or FormatAge(e.age))
     if e.isSelf then
@@ -1228,7 +1337,12 @@ local function MemberWhere(e, p)
     local inst = ns.InstanceAt and ns.InstanceAt(zone)
     local cont = ns.GetZoneContinent(zone)
     local text = zone .. (not inst and cont and cont ~= zone and (", " .. cont) or "")
-    text = (WHERE_COLOR[status] or "|cffd0d0d0") .. text .. "|r"
+    local hops = status == "near" and acts and #acts > 0 and ns.db.zoneHops ~= false and ns.ZoneHops(zone, acts)
+    if hops then
+        text = HopsText(zone, hops)
+    else
+        text = (WHERE_COLOR[status] or "|cffd0d0d0") .. text .. "|r"
+    end
     if inst or id then text = DungeonIcon(id, 14, inst and inst.raid) .. " " .. text end
     if age then
         text = text .. (L[" |cff808080(%s ago)|r"]):format(FormatAge(age))
@@ -1283,7 +1397,7 @@ local function AddMembers(e)
         GameTooltip:AddDoubleLine(left, where, 1, 1, 1, 1, 1, 1)
     end
     if unknown > 0 and not e.isSelf then
-        GameTooltip:AddLine(L["Click the map button on the card to find where they are. It checks the group's zone first, which usually finds everyone at once; the rest follow about every five seconds as you click or press keys (the game allows /who only on input)."], 0.5, 0.5, 0.5, true)
+        GameTooltip:AddLine(L["Click the map button on the card to find where they are."], 0.5, 0.5, 0.5, true)
     end
 end
 
@@ -1294,13 +1408,15 @@ end
 -- activities a group is one line with its count, as the game's minimap tooltip does.
 function ns.AddActivityLines(tip, ids, mineIDs, withDetails, goldHeaders, maxVerbose)
     ids = ids or {}
-    local function IsMine(id) return mineIDs ~= nil and tContains(mineIDs, id) end
+    local function IsMine(id) return type(mineIDs) == "table" and tContains(mineIDs, id) end
     local function Line(id, indent)
         local text = ns.GetActivityName(id)
         if withDetails then
             local lo, hi = ns.GetActivityRange(id)
             local where = ns.GetActivityContinent(id)
             text = text .. (lo and (" (%d-%d)"):format(lo, hi) or "") .. (where and ("  |cff999999%s|r"):format(where) or "")
+            local done, total = ns.InstanceLock(id)
+            if done then text = text .. "  |cffff5555" .. (L["saved %d/%d"]):format(done, total) .. "|r" end
         end
         if IsMine(id) then text = "|cff66bbff" .. text .. "|r" end
         tip:AddLine((indent and "    " or "") .. text, goldHeaders and 1 or 0.6, goldHeaders and 1 or 0.6, goldHeaders and 1 or 0.6)
@@ -1324,91 +1440,63 @@ function ns.AddActivityLines(tip, ids, mineIDs, withDetails, goldHeaders, maxVer
     end
 end
 
+-- The game's tooltip is see-through, so whatever's behind it (another addon's frames, the
+-- world) shows through its text. Seeker's listing tooltip gets a solid background while it
+-- shows; the game's own style comes back as soon as it hides or anything else takes the tooltip.
+local solidHooked
+local function RestoreTooltipStyle(self)
+    if not self.seekerSolid then return end
+    self.seekerSolid = nil
+    if GameTooltip_SetBackdropStyle and GAME_TOOLTIP_BACKDROP_STYLE_DEFAULT then
+        pcall(GameTooltip_SetBackdropStyle, self, GAME_TOOLTIP_BACKDROP_STYLE_DEFAULT)
+    elseif self.NineSlice and TOOLTIP_DEFAULT_BACKGROUND_COLOR then
+        self.NineSlice:SetCenterColor(TOOLTIP_DEFAULT_BACKGROUND_COLOR:GetRGBA())
+    end
+end
+
+local function MakeTooltipSolid()
+    local nine = GameTooltip.NineSlice
+    if not (nine and nine.SetCenterColor) then return end
+    if not solidHooked then
+        solidHooked = true
+        GameTooltip:HookScript("OnHide", RestoreTooltipStyle)
+        pcall(GameTooltip.HookScript, GameTooltip, "OnTooltipCleared", RestoreTooltipStyle)
+    end
+    nine:SetCenterColor(0.03, 0.03, 0.05, 0.97)
+    GameTooltip.seekerSolid = true
+end
+
 function ns.ShowEntryTooltip(owner, e)
     AnchorBesideWindow(owner, not e.isSolo)
     local info = e.info
     -- Each part on its own, so one that fails can't hide the rest.
-    local function Part(fn)
-        local ok = pcall(fn)
-        return ok
-    end
+    local function Part(fn) pcall(fn) end
+    local function Gap() GameTooltip:AddLine(" ") end
+    local function Heading(text) GameTooltip:AddLine(text, 1, 0.82, 0) end
 
-    -- Title: the listing's name if it has one, else the leader. Delisted ones say so first.
+    -- Who: the listing's name (else the leader's, in their class colour), and on the right the
+    -- level in its XP colour, after a group's size.
     Part(function()
         if e.isDelisted then GameTooltip:AddLine(LFG_LIST_ENTRY_DELISTED or L["This listing has been removed."], 1, 0.13, 0.13) end
-        local leader = e.leader or {}
         local title = ListingTitle(e)
-        if title then
-            GameTooltip:AddLine(title, 1, 1, 1)
-        else
-            GameTooltip:AddLine(ShortName(e.leaderName) or "?", ClassColor(leader.classFilename))
+        local r, g, b = 1, 1, 1
+        if not title then r, g, b = ClassColor((e.leader or {}).classFilename) end
+        local xc = XP_COLORS[e.xpStatus or "unknown"]
+        local level = Hex(xc[1], xc[2], xc[3]) .. (LEVEL_ABBR or L["Lv"]) .. " " .. (e.maxLevel and tostring(e.maxLevel) or "?") .. "|r"
+        local size = (not e.isSolo and not e.fromChat) and ("|cffb0b0b0%d/%d|r   "):format(e.numMembers or 1, e.maxPlayers or 5) or ""
+        GameTooltip:AddDoubleLine(title or ShortName(e.leaderName) or "?", size .. level, r, g, b, 1, 1, 1)
+    end)
+
+    -- The listing's details on one line: playstyle, new players welcome, voice chat, friends.
+    Part(function()
+        local bits = {}
+        if info.generalPlaystyle and info.generalPlaystyle ~= 0 and GetGeneralPlaystyleString then
+            local ok, style = pcall(GetGeneralPlaystyleString, info.generalPlaystyle)
+            if ok and style and style ~= "" then bits[#bits + 1] = "|cff19ff19" .. style .. "|r" end
         end
         if info.newPlayerFriendly then
-            GameTooltip:AddLine((HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a " or "")
-                .. (LFG_LIST_NEW_PLAYER_FRIENDLY_HEADER or LFG_LIST_NEW_PLAYER_FRIENDLY or L["New Player Friendly"]), 0.1, 1, 0.1)
-        end
-        -- From chat: where and when (their message is the note below).
-        if e.fromChat and e.chat then
-            GameTooltip:AddLine((L["From chat (%s), %s ago"]):format(e.chat.channel or "?", FormatAge(e.age)), 0.55, 0.78, 1)
-        end
-        -- Your request or invite, and your note on them.
-        if not e.isSelf then
-            local contact = ns.ContactText and ns.ContactText(e.leaderName) or ""
-            if contact ~= "" then GameTooltip:AddLine(contact) end
-            local note = ns.GetNote and ns.GetNote(e.leaderName)
-            if note then GameTooltip:AddLine(ns.NoteIcon(14) .. " |cffffd100" .. L["Your note:"] .. "|r " .. note, 1, 1, 1, true) end
-        end
-    end)
-
-    -- Friends and guildmates in it.
-    Part(function()
-        local social = SocialText(e)
-        if social ~= "" then GameTooltip:AddLine(social, 1, 1, 1) end
-    end)
-
-    -- Everyone in it, with where they are.
-    Part(function()
-        GameTooltip:AddLine(" ")
-        AddMembers(e)
-    end)
-
-    -- The group's note.
-    Part(function()
-        local comment = info.comment
-        if comment and comment ~= "" then
-            GameTooltip:AddLine(" ")
-            local okF, text = pcall(string.format, LFG_LIST_COMMENT_FORMAT or "\"%s\"", comment)
-            GameTooltip:AddLine(okF and text or comment, 0.85, 0.85, 0.85, true)
-        end
-    end)
-
-    -- Member count by role (the game's line), playstyle, voice chat.
-    Part(function()
-        GameTooltip:AddLine(" ")
-        if e.fromChat then
-            if not e.isSolo then
-                local wanted = {}
-                for _, key in ipairs(ROLE_KEYS) do
-                    if e.chatNeeds and e.chatNeeds[key] then wanted[#wanted + 1] = RoleMarkup(key, 14) .. " " .. ROLE_NAMES[key] end
-                end
-                GameTooltip:AddLine((L["Looking for: %s"]):format(#wanted > 0 and table.concat(wanted, "  ") or L["anyone (no role named)"]), 1, 0.82, 0)
-            end
-        elseif e.isSolo then
-            if LFG_LIST_TOOLTIP_MEMBERS_SIMPLE then
-                GameTooltip:AddLine(LFG_LIST_TOOLTIP_MEMBERS_SIMPLE:format(e.numMembers), 1, 0.82, 0)
-            end
-        else
-            local c = e.counts or {}
-            local tanks, healers, dps = c.TANK or e.tanks, c.HEALER or e.healers, c.DAMAGER or e.dps
-            if LFG_LIST_TOOLTIP_MEMBERS then
-                GameTooltip:AddLine(LFG_LIST_TOOLTIP_MEMBERS:format(e.numMembers, tanks, healers, dps), 1, 0.82, 0)
-            else
-                GameTooltip:AddLine((L["Members: %d (%d/%d/%d)"]):format(e.numMembers, tanks, healers, dps), 1, 0.82, 0)
-            end
-        end
-        if info.generalPlaystyle and info.generalPlaystyle ~= 0 and GetGeneralPlaystyleString then
-            local okP, s = pcall(GetGeneralPlaystyleString, info.generalPlaystyle)
-            if okP and s then GameTooltip:AddLine((PLAYSTYLE or L["Playstyle"]) .. ": |cff19ff19" .. s .. "|r", 0.8, 0.8, 0.8) end
+            bits[#bits + 1] = (HasAtlas("newplayerchat-chaticon-newcomer") and "|A:newplayerchat-chaticon-newcomer:14:14|a " or "")
+                .. "|cff19ff19" .. (LFG_LIST_NEW_PLAYER_FRIENDLY_HEADER or LFG_LIST_NEW_PLAYER_FRIENDLY or L["New Player Friendly"]) .. "|r"
         end
         if Enum.LFGEntryVoiceMode and info.voiceMode and info.voiceMode ~= Enum.LFGEntryVoiceMode.None then
             local labels = {
@@ -1416,46 +1504,128 @@ function ns.ShowEntryTooltip(owner, e)
                 [Enum.LFGEntryVoiceMode.Discord] = VOICE_CHAT_MODE_DISCORD,
                 [Enum.LFGEntryVoiceMode.Custom] = VOICE_CHAT_MODE_CUSTOM,
             }
-            if labels[info.voiceMode] then
-                GameTooltip:AddLine((VOICE_CHAT or L["Voice chat"]) .. ": " .. labels[info.voiceMode], 0.8, 0.8, 0.8)
+            if labels[info.voiceMode] then bits[#bits + 1] = "|cffc0c0c0" .. labels[info.voiceMode] .. "|r" end
+        end
+        local social = SocialText(e)
+        if social ~= "" then bits[#bits + 1] = social end
+        if #bits > 0 then GameTooltip:AddLine(table.concat(bits, "  ·  "), 1, 1, 1, true) end
+        -- From chat: where and when it was posted.
+        if e.fromChat and e.chat then
+            GameTooltip:AddLine((L["From chat (%s), %s ago"]):format(e.chat.channel or "?", FormatAge(e.age)), 0.55, 0.78, 1)
+        end
+        -- Your request or invite, and your own note on them.
+        if not e.isSelf then
+            local contact = ns.ContactText and ns.ContactText(e.leaderName) or ""
+            if contact ~= "" then GameTooltip:AddLine(contact) end
+            local note = ns.GetNote and ns.GetNote(e.leaderName)
+            if note then GameTooltip:AddLine(ns.NoteIcon(14) .. " |cffffd100" .. L["Your note:"] .. "|r " .. note, 1, 1, 1, true) end
+            -- Anyone in it you've grouped with before (the first few).
+            local people = e.members or {}
+            if #people == 0 then people = { { name = e.leaderName } } end
+            local shown = 0
+            for _, p in ipairs(people) do
+                local text = shown < 3 and p.name and ns.GroupedText and ns.GroupedText(p.name)
+                if text then
+                    shown = shown + 1
+                    local who = (e.isSolo or ns.LocationKey(p.name) == ns.LocationKey(e.leaderName)) and "" or (ShortName(p.name) .. ": ")
+                    GameTooltip:AddLine(ns.GroupedIcon(14) .. " " .. who .. text, 0.7, 0.63, 1, true)
+                end
             end
         end
     end)
 
-    -- What they're listed for, grouped as the game groups activities, ones you're listed for in
-    -- blue; and bosses already down (as the game, only when they're listed for one activity).
+    -- What the leader wrote (a chat post's message), in their words.
     Part(function()
-        GameTooltip:AddLine(" ")
-        local mine = not e.isSelf and ns.HasListing() and ns.GetListing()
-        ns.AddActivityLines(GameTooltip, e.activityIDs, mine and mine.activityIDs, true)
-        if not e.isSolo and #e.activityIDs == 1 and C_LFGList.GetSearchResultEncounterInfo then
-            local okE, done = pcall(C_LFGList.GetSearchResultEncounterInfo, e.id)
-            if okE and done and #done > 0 then
+        local comment = type(info.comment) == "string" and strtrim(info.comment) or ""
+        if comment ~= "" then
+            Gap()
+            Heading(e.fromChat and L["Their message:"] or ((DESCRIPTION or L["Description"]) .. ":"))
+            GameTooltip:AddLine(comment, 1, 1, 1, true)
+        end
+    end)
+
+    -- What they're looking for: the dungeons (yours in blue), and a chat group's roles. Bosses
+    -- already down, as the game shows them, when a group is listed for one activity.
+    Part(function()
+        Gap()
+        Heading(L["Looking for:"])
+        if e.fromChat and not e.isSolo then
+            local wanted = {}
+            for _, key in ipairs(ROLE_KEYS) do
+                if e.chatNeeds and e.chatNeeds[key] then wanted[#wanted + 1] = RoleMarkup(key, 14) .. " " .. ROLE_NAMES[key] end
+            end
+            GameTooltip:AddLine(#wanted > 0 and table.concat(wanted, "   ") or L["anyone (no role named)"], 1, 1, 1)
+        end
+        local mine = (not e.isSelf and ns.HasListing()) and ns.GetListing() or nil
+        ns.AddActivityLines(GameTooltip, e.activityIDs, mine and mine.activityIDs or nil, true)
+        if not e.isSelf and not e.isSolo and e.savedAll then
+            GameTooltip:AddLine(LOCK_ICON .. L["You're saved to this, so you couldn't go in with them."], 1, 0.3, 0.3, true)
+        end
+        if not e.isSolo and not e.fromChat and #e.activityIDs == 1 and C_LFGList.GetSearchResultEncounterInfo then
+            local ok, done = pcall(C_LFGList.GetSearchResultEncounterInfo, e.id)
+            if ok and done and #done > 0 then
                 GameTooltip:AddLine(LFG_LIST_BOSSES_DEFEATED or BOSSES_KILLED or L["Bosses defeated:"], 1, 0.82, 0)
                 for _, boss in ipairs(done) do GameTooltip:AddLine("    " .. boss, 0.9, 0.5, 0.5) end
             end
         end
-        if e.isSolo and e.distance == "far" and e.continent then
-            GameTooltip:AddLine((L["On %s, but the dungeon is in %s."]):format(e.continent, e.dungeonContinent or L["another continent"]),
-                1, 0.3, 0.3, true)
+    end)
+
+    -- A player: where they are and what they'll play. A group: everyone in it, with roles and
+    -- where they are, under its size and role counts.
+    Part(function()
+        Gap()
+        if e.isSolo then
+            -- Each value straight after its label (on a wide tooltip a right-hand column leaves
+            -- them stranded at the far edge), and the roles named beside their icons.
+            local p = e.leader or {}
+            local where, unknown = MemberWhere(e, p)
+            GameTooltip:AddLine("|cffffd100" .. L["Where:"] .. "|r " .. where, 1, 1, 1, true)
+            local named = {}
+            for _, key in ipairs(ROLE_KEYS) do
+                if p.lfgRoles and p.lfgRoles[key] then named[#named + 1] = RoleMarkup(key, 14) .. " " .. ROLE_NAMES[key] end
+            end
+            if #named > 0 then GameTooltip:AddLine("|cffffd100" .. L["Roles:"] .. "|r " .. table.concat(named, "   "), 1, 1, 1) end
+            if e.distance == "far" and e.continent then
+                GameTooltip:AddLine((L["On %s, but the dungeon is in %s."]):format(e.continent, e.dungeonContinent or L["another continent"]),
+                    1, 0.3, 0.3, true)
+            end
+            if unknown and not e.isSelf then
+                GameTooltip:AddLine(L["Click the map button on the card to find where they are."], 0.5, 0.5, 0.5, true)
+            end
+        else
+            if e.fromChat then
+                Heading(L["Posted by:"])
+            else
+                local c = e.counts or {}
+                Heading(("%s  %d/%d     %s %d   %s %d   %s %d"):format(L["Group"], e.numMembers or 1, e.maxPlayers or 5,
+                    RoleMarkup("tank", 14), c.TANK or e.tanks or 0, RoleMarkup("healer", 14), c.HEALER or e.healers or 0,
+                    RoleMarkup("dps", 14), c.DAMAGER or e.dps or 0))
+            end
+            if e.myFit and not e.isSelf then
+                local named = {}
+                for _, key in ipairs(e.myFit) do named[#named + 1] = RoleMarkup(key, 14) .. " " .. ROLE_NAMES[key] end
+                GameTooltip:AddLine((L["Room for you as %s."]):format(table.concat(named, L[" or "])), 0.33, 1, 0.33, true)
+            end
+            AddMembers(e)
         end
     end)
 
-    -- XP for you, and how long it's been listed.
+    -- XP for you: the verdict in its colour, then why.
     Part(function()
-        GameTooltip:AddLine(" ")
+        Gap()
         local c = XP_COLORS[e.xpStatus or "unknown"]
-        GameTooltip:AddLine(L["XP: "] .. XP_LABELS[e.xpStatus or "unknown"] .. " " .. XPMark(e.xpStatus), c[1], c[2], c[3])
+        GameTooltip:AddLine(XP_LABELS[e.xpStatus or "unknown"] .. " " .. XPMark(e.xpStatus), c[1], c[2], c[3])
         if e.xpLo then
             GameTooltip:AddLine((L["Highest level %d%s vs mobs ~%d-%d. Full XP up to %d, some XP up to %d."]):format(
                 e.effectiveLevel, e.selfIsHighest and L[" (you)"] or "", e.xpLo, e.xpHi,
                 e.xpLo + ns.XP_GAP, e.xpHi + ns.XP_GAP), 0.75, 0.75, 0.75, true)
         end
-        GameTooltip:AddLine((e.fromChat and L["Posted %s ago"] or L["Listed %s ago"]):format(FormatAge(e.age)), 0.5, 0.5, 0.5)
     end)
 
-    -- What else the card does (its buttons show while you point at it; the rest is a right-click away).
+    -- Footer: how long it's been listed, and what right-click offers.
     Part(function()
+        Gap()
+        GameTooltip:AddLine((e.fromChat and L["Posted %s ago"] or L["Listed %s ago"]):format(FormatAge(e.age)), 0.5, 0.5, 0.5)
         if e.isDelisted then return end
         local hint
         if e.isSelf then
@@ -1469,6 +1639,7 @@ function ns.ShowEntryTooltip(owner, e)
     end)
 
     GameTooltip:Show()
+    MakeTooltipSolid()
 end
 
 function ns.EntryMenu(owner, e)
@@ -1543,7 +1714,7 @@ ns.UI = {
     ClassColor = ClassColor, Hex = Hex, ClassName = ClassName, SetClassIcon = SetClassIcon, ShortName = ShortName,
     Inset = Inset, HeaderBar = HeaderBar, RedButton = RedButton, Check = Check, NumberBox = NumberBox,
     Dropdown = Dropdown, Radio = Radio, Chip = Chip, UpdateToggles = UpdateToggles, IconButton = IconButton,
-    ApplyRole = ApplyRole, RoleMarkup = RoleMarkup, AnchorBesideWindow = AnchorBesideWindow,
+    ApplyRole = ApplyRole, RoleMarkup = RoleMarkup, AnchorBesideWindow = AnchorBesideWindow, MakeTooltipSolid = MakeTooltipSolid,
     ROLE_KEYS = ROLE_KEYS, ROLE_NAMES = ROLE_NAMES, TOPBAR_Y = TOPBAR_Y, FILTER_TOP = FILTER_TOP,
     HEADER_H = HEADER_H, SCROLL_W = SCROLL_W, FRAME_W = FRAME_W, FRAME_H = FRAME_H, WHITE = WHITE,
 }
@@ -1775,7 +1946,7 @@ local function AddGrip(f)
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
     -- Dragging makes the window taller (or back down to the game's height), so the lists show more
     -- cards; the width stays, as both lists are laid out for it. Ctrl + mouse wheel scales it.
-    grip:SetScript("OnMouseDown", function()
+    local function StartDrag()
         local _, startY = GetCursorPosition()
         startY = startY / f:GetEffectiveScale()
         local startH = f:GetHeight()
@@ -1783,16 +1954,45 @@ local function AddGrip(f)
             local _, y = GetCursorPosition()
             ns.SetHeight(startH + (startY - y / f:GetEffectiveScale()))
         end)
-    end)
+    end
     local function EndDrag()
         if grip:GetScript("OnUpdate") then
             grip:SetScript("OnUpdate", nil)
             ns.SavePosition()
         end
     end
+    grip:SetScript("OnMouseDown", StartDrag)
     grip:SetScript("OnMouseUp", EndDrag)
     f:HookScript("OnHide", EndDrag)
     Tooltip(grip, L["Drag to resize"], L["Drag down to make the window taller, so the lists show more. Ctrl + mouse wheel over the window scales everything, text included."])
+
+    -- The window's whole bottom edge drags too (the corner grip is small), lit gold while you
+    -- point at it.
+    local edge = CreateFrame("Frame", nil, f)
+    edge:SetPoint("BOTTOMLEFT", 24, 0)
+    edge:SetPoint("BOTTOMRIGHT", grip, "BOTTOMLEFT", -4, -6)
+    edge:SetHeight(7)
+    edge:SetFrameLevel(f:GetFrameLevel() + 20)
+    edge:EnableMouse(true)
+    local lit = edge:CreateTexture(nil, "OVERLAY")
+    lit:SetPoint("LEFT", 0, 1)
+    lit:SetPoint("RIGHT", 0, 1)
+    lit:SetHeight(2)
+    lit:SetColorTexture(1, 0.82, 0, 0.7)
+    lit:Hide()
+    edge:SetScript("OnMouseDown", StartDrag)
+    edge:SetScript("OnMouseUp", EndDrag)
+    edge:SetScript("OnEnter", function(self)
+        lit:Show()
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        GameTooltip:SetText(L["Drag to resize"], 1, 1, 1)
+        GameTooltip:AddLine(L["Drag down to make the window taller, so the lists show more."], nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    edge:SetScript("OnLeave", function()
+        lit:Hide()
+        GameTooltip_Hide()
+    end)
 end
 
 local function BuildFilters(f, panel)
@@ -1919,6 +2119,8 @@ local TABS = {
       label = function() return LFG_LIST_TAB_2 or L["Browse groups"] end },
     { key = "who", icon = "Interface\\Icons\\INV_SideTab_WhoList_c60", fallback = "Interface\\Icons\\INV_Misc_GroupLooking",
       label = function() return LFG_LIST_TAB_3 or WHO or L["Who"] end },
+    { key = "people", icon = "Interface\\Icons\\INV_Letter_15", fallback = "Interface\\Icons\\INV_Misc_Note_01",
+      label = function() return L["People: whispers while you're listed, and players you've grouped with"] end },
 }
 
 -- The game's own side tab (LargeSideTabButtonTemplate), set up as its group finder sets up its
@@ -1999,12 +2201,28 @@ local function CreateSideTabs(f)
     end
 end
 
+-- The People tab's count of whispers you haven't looked at yet, on its side tab.
+function ns.UpdatePeopleBadge()
+    if not (frame and frame.tabs) then return end
+    for _, tab in ipairs(frame.tabs) do
+        if tab.key == "people" then
+            if not tab.badge then
+                tab.badge = tab:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+                tab.badge:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", -6, 6)
+                tab.badge:SetTextColor(1, 0.82, 0)
+            end
+            local n = ns.InboxUnread and ns.InboxUnread() or 0
+            tab.badge:SetText(n > 0 and tostring(n) or "")
+        end
+    end
+end
+
 function ns.ShowTab(key)
     if not frame then ns.Toggle() end
     if not frame.pages[key] then key = "browse" end
-    -- Can't use the group finder: only the Who tab (see MayOpen).
+    -- Can't use the group finder: only the Who and People tabs (see MayOpen).
     local canUse, reason = ns.CanUseGroupFinder()
-    if key ~= "who" and not canUse then
+    if key ~= "who" and key ~= "people" and not canUse then
         ns.Print(reason)
         key = "who"
     end
@@ -2034,6 +2252,8 @@ function ns.UpdateListedState()
         end
     end
     if frame.delistBtn then frame.delistBtn:SetShown(listed and ns.CanEditListing()) end
+    -- Not listed: a way to the List yourself page from Browse, in the Delist button's place.
+    if frame.listBtn then frame.listBtn:SetShown(not listed) end
     if ns.RefreshListingPage and frame.pages.listing and frame.pages.listing:IsShown() then ns.RefreshListingPage() end
 end
 
@@ -2306,6 +2526,16 @@ local function BuildFrame()
     Tooltip(f.delistBtn, LFG_LIST_UNLIST or L["Delist"], L["Take your listing off the group finder."])
     f.delistBtn:Hide()
 
+    -- List yourself, in the same place while you're not listed: the eye side tab is easy to miss.
+    f.listBtn = RedButton(browse, LFG_LIST_TAB_1 or L["List yourself"], 110, 24)
+    f.listBtn:SetPoint("LEFT", f.searchBtn, "RIGHT", 6, 0)
+    f.listBtn:SetScript("OnClick", function()
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+        if ns.Listing and ns.Listing.PrefillFromBrowse then ns.Listing.PrefillFromBrowse() end
+        ns.ShowTab("listing")
+    end)
+    Tooltip(f.listBtn, LFG_LIST_TAB_1 or L["List yourself"], L["List yourself or your group, starting with the category and activities you're browsing. (The eye tab on the right opens it too, as you left it.)"])
+
     local find = TryCreate("EditBox", "SeekerLFGFindBox", browse, "SearchBoxTemplate")
         or CreateFrame("EditBox", "SeekerLFGFindBox", browse, "InputBoxTemplate")
     find:SetSize(170, 24)
@@ -2438,7 +2668,7 @@ local function BuildFrame()
     end)
 
     -- The other pages
-    for _, key in ipairs({ "listing", "who" }) do
+    for _, key in ipairs({ "listing", "who", "people" }) do
         local page = CreateFrame("Frame", nil, f)
         page:SetAllPoints()
         page:Hide()
@@ -2446,8 +2676,10 @@ local function BuildFrame()
     end
     if ns.BuildListingPage then ns.BuildListingPage(f, f.pages.listing) end
     if ns.BuildWhoPage then ns.BuildWhoPage(f, f.pages.who) end
+    if ns.BuildPeoplePage then ns.BuildPeoplePage(f, f.pages.people) end
 
     CreateSideTabs(f)
+    ns.UpdatePeopleBadge()
     -- The side tabs hang off the window's right edge: keep them on screen too, not just the window.
     local tabW = (f.tabs[1] and f.tabs[1]:GetWidth()) or 0
     if tabW <= 0 then tabW = 50 end
@@ -2484,6 +2716,7 @@ local function BuildFrame()
     end)
     f:SetScript("OnShow", function()
         PlaySound(SOUNDKIT.IG_CHARACTER_INFO_OPEN)
+        if RequestRaidInfo then RequestRaidInfo() end -- lockouts, for the cards
         ns.ShowTab(db.tab or "browse")
         ns.UpdateListedState()
     end)
@@ -2496,7 +2729,7 @@ end
 -- the level it needs, for example); nor does Seeker, except for the Who tab, which /who results
 -- open whatever your level. True if the window may open on this tab.
 local function MayOpen(tab)
-    if tab == "who" then return true end
+    if tab == "who" or tab == "people" then return true end
     local canUse, reason = ns.CanUseGroupFinder()
     if not canUse then ns.Print(reason) end
     return canUse
@@ -2664,8 +2897,25 @@ function ns.ShowOptionsMenu(owner)
                 ns.db.filters.greyOutsidePick = not ns.db.filters.greyOutsidePick
                 ns.Render()
             end)
+        sort:CreateCheckbox(L["Grey out groups for raids I'm saved to"],
+            function() return ns.db.filters.greySaved end, function()
+                ns.db.filters.greySaved = not ns.db.filters.greySaved
+                ns.Render()
+            end)
         root:CreateCheckbox(L["Show XP as symbols too"], function() return ns.db.xpMarks end, function()
             ns.db.xpMarks = not ns.db.xpMarks
+            ns.Render()
+        end)
+        root:CreateCheckbox(L["Light up the seat I'd fill"], function() return ns.db.markMySeat ~= false end, function()
+            ns.db.markMySeat = ns.db.markMySeat == false
+            ns.Render()
+        end)
+        root:CreateCheckbox(L["Show how many zones away"], function() return ns.db.zoneHops ~= false end, function()
+            ns.db.zoneHops = ns.db.zoneHops == false
+            ns.Render()
+        end)
+        root:CreateCheckbox(L["Compact cards"], function() return ns.db.compactCards end, function()
+            ns.db.compactCards = not ns.db.compactCards
             ns.Render()
         end)
         local by = root:CreateButton(L["Group activities by"])
@@ -2677,6 +2927,9 @@ function ns.ShowOptionsMenu(owner)
         local alerts = root:CreateButton(L["Alerts"])
         local A = ns.db.alerts
         alerts:CreateCheckbox(L["Tell me about new matches"], function() return A.enabled end, function() A.enabled = not A.enabled end)
+        alerts:CreateRadio(L["Only roles I need: players for my party, or groups with room for me"],
+            function() return A.mode ~= "all" end, function() A.mode = "roles" end)
+        alerts:CreateRadio(L["Anything new that passes my filters"], function() return A.mode == "all" end, function() A.mode = "all" end)
         alerts:CreateCheckbox(L["Only ones with full XP"], function() return A.fullXPOnly end, function() A.fullXPOnly = not A.fullXPOnly end)
         alerts:CreateCheckbox(L["Play a sound"], function() return A.sound end, function() A.sound = not A.sound end)
         alerts:CreateCheckbox(L["Flash the game's icon"], function() return A.flash end, function() A.flash = not A.flash end)
@@ -2716,6 +2969,9 @@ function ns.ShowOptionsMenu(owner)
         if ns.AddSetupsMenu then ns.AddSetupsMenu(root) end
         root:CreateCheckbox(L["Keep results fresh"], function() return ns.db.autoRefresh end, function()
             ns.db.autoRefresh = not ns.db.autoRefresh
+        end)
+        root:CreateCheckbox(L["Collect whispers while I'm listed"], function() return ns.db.whisperInbox ~= false end, function()
+            ns.db.whisperInbox = ns.db.whisperInbox == false
         end)
         if IsInGroup() or ns.HasListing() then
             local fill = root:CreateButton(L["Fill my group"], function() ns.FillMyGroup() end)
@@ -2838,6 +3094,8 @@ local COMMANDS = {
     { "ignored", L["list the players you've hidden"] },
     { "hidewords <a, b>", L["hide listings whose title or note has any of these words (empty clears)"] },
     { "fill", L["leaders: show the players who'd fill your group's missing roles"] },
+    { "whispers", L["the whispers you've had while listed (People tab)"] },
+    { "grouped", L["the players you've grouped with (People tab)"] },
     { "setup [name]", L["switch to a saved filter setup (no name lists them)"] },
     { "setup save <name>", L["save your current filters as a setup"] },
     { "note <name> [text]", L["your note on a player (no text removes it)"] },
@@ -2926,6 +3184,10 @@ SlashCmdList.SEEKERLFG = function(raw)
         ns.SetMinimapButton(ns.db.minimapButton == false)
     elseif msg == "messages" then
         ns.ShowMessages()
+    elseif msg == "whispers" or msg == "people" then
+        ns.ShowPeople("whispers")
+    elseif msg == "grouped" then
+        ns.ShowPeople("grouped")
     elseif msg:match("^selftest") or msg:match("^test") then
         ns.SelfTest(msg:match("all") and "all" or nil)
     elseif msg == "settings" or msg == "options" then

@@ -11,7 +11,7 @@ Seeker LFG replaces Forever's Looking for Group window with one that looks and f
 ## Why Seeker
 
 - **Keep your XP.** Kill XP is lost when the highest-level party member is more than 12 levels above the mob. Every group and player is checked against that rule, and the level is coloured: green for full XP, yellow for partial XP, red for none. One click hides everything that would cost you XP.
-- **See where people are.** Every player's zone is shown, in red when they're on the wrong continent for their dungeon (someone in Kalimdor queued for the Deadmines) and in green when they're already there. Group tooltips show where every member is, too.
+- **See where people are.** Every player's zone is shown with how many zones they are from their dungeon's entrance ("Tanaris (2 zones away)"), coloured from green to orange, in red when they're on the wrong continent (someone in Kalimdor queued for the Deadmines), and with the dungeon's icon when they're already inside. Group tooltips show where every member is, too.
 - **Groups and players side by side,** in the game's own style, with each party's roles at a glance.
 - **Everything the game's window does:** list yourself or your group, browse, invite, report, and search /who.
 
@@ -21,16 +21,20 @@ Seeker LFG replaces Forever's Looking for Group window with one that looks and f
 - **Filters:** XP (full only, any, or all), level range, groups that need a tank / healer / DPS, players who can tank / heal / DPS, player class, hide full groups, and hide far-away players.
 - **Activities by XP:** the activity menu sorts dungeons into Full XP for you, Above your level, Some XP and No XP for you. One click picks every dungeon with full XP for you.
 - **Friends and guildmates:** listings with them in get a badge and sort near the top.
-- **Sort:** best XP, newest, oldest, level either way, biggest groups first, or the game's own order (groups with a seat for your roles first).
+- **Sort:** best XP, newest, oldest, level either way, biggest groups first, closest to the dungeon first, or the game's own order (groups with a seat for your roles first).
+- **Zones away:** where someone is says how many zones they are from their dungeon's entrance, green in its zone, then yellow and orange further off. Forever's own dungeons (Alcaz Prison, Blackmaw Hold, the Drowned City and the rest) count too.
+- **Compact cards:** Cog > Compact cards puts each card on two lines, so more fit.
 - **Shown like the game shows them:** each activity's own display (the listing's note, a player count, class icons, role counts or seats), listings taken down since your search greyed out rather than gone, and activities grouped either by XP or by the game's own groups.
 - **Tooltips:** every member with level, role and location, the group's note, playstyle, voice chat and bosses already killed.
 - **Groups from chat:** groups and players looking for a dungeon in chat channels ("LF2M SM Arm need heal") appear beside the group finder's listings, marked chat, with the same filters.
 - **Whom you've asked:** cards show when you've asked a group to join or invited a player, and whether they replied, declined or joined.
+- **The seat you'd fill:** a group's first open seat shows one of your roles they still need, lit green.
+- **Lockouts:** groups for a raid or dungeon you're saved to show the game's lockout icon, and ones listed only for those are greyed out at the bottom.
 - **Fill my group:** for leaders, one click shows the players who'd fill your group's missing roles, with full XP for it.
 - **Notes and setups:** keep a note on players you've grouped with, and save filter setups to switch between ("Tanking on my warrior").
 - **Request to join.** Forever has no "apply to group", so this opens a whisper to the leader with your request already written; press Enter to send it.
 - **Hide players and spam:** right-click a listing > Hide to never see that player's listings again, hide everyone on your ignore list, and hide listings whose title or note mentions words you pick (Options > AddOns > Seeker LFG, or `/seeker hidewords wts, boost`).
-- **Alerts:** new groups and players that pass your filters are announced in chat with a sound. Bind **Search again** (Keybindings > Seeker LFG) to check without opening the window.
+- **Alerts for the roles you need:** in a party, you're told in chat (with a sound) when a player lists who can play a role it's missing ("Healer listed: Bob, level 50 (Maraudon, 2 zones away)"); on your own, when a group lists with room for one of your roles. Click a name to whisper them. Cog > Alerts can announce anything new that passes your filters instead. Bind **Search again** (Keybindings > Seeker LFG) to check without opening the window.
 
 ## List yourself
 
@@ -38,7 +42,7 @@ Seeker LFG replaces Forever's Looking for Group window with one that looks and f
 
 *Listing a group of three: pick a category, your role and a playstyle, and see how others will see you.*
 
-Pick a category, tick what you're listing for, and choose a playstyle, voice chat, a description, your roles and "new player friendly". A preview shows how other players will see your listing. When you're in a group, you get the role dropdown and a role check, and only the leader can change the listing.
+Click **Create Listing** on Browse (or the eye tab) to start: from Browse, it starts with the category and dungeons you're browsing already picked. Pick a category, tick what you're listing for, and choose a playstyle, voice chat, a description, your roles and "new player friendly". A preview shows how other players will see your listing. When you're in a group, you get the role dropdown and a role check, and only the leader can change the listing.
 
 ![Choosing activities, sorted by what they'd give you in XP](https://raw.githubusercontent.com/rynmon/SeekerLFG/main/assets/screenshots/listing-activities.png)
 
@@ -49,6 +53,12 @@ Activities are grouped by what they'd give you in XP, so you can see straight aw
 ## Who
 
 A /who search with class, race and zone filters, and an invite button for each player. Click a column heading to sort by it (again to reverse). Your filters and sort are kept between sessions, and your results stay put while Seeker looks up group members in the background.
+
+## People
+
+Forever's group finder has no applications: players who want to join whisper the leader. While you're listed, the **People** tab gathers those whispers, newest first. Each one shows the player's class, level, roles and where they are (the map button finds out when Seeker doesn't know), with Invite, Whisper and Dismiss buttons. The tab shows how many you haven't looked at yet.
+
+Its other list, **Grouped with**, remembers everyone you've been in a group with for a few minutes: what you ran, when, and how many times. Search it by name or dungeon, add a note, or forget someone. Their cards and tooltips say so too ("Grouped with you: Dire Maul, 2 days ago").
 
 ## Your own messages
 
@@ -79,7 +89,7 @@ Install it from CurseForge (the CurseForge app, with WoW Forever picked), or by 
 - Open it with `/seeker` (or `/slfg`), the minimap eye, or the addon compartment. The minimap eye watches while you're listed, like the game's own.
 - The minimap button works with minimap button collectors, and Seeker also shows in broker bars (Titan Panel, ChocolateBar, Bazooka and the like).
 - To use Seeker for good, open the cog menu and turn on **Replace the game's Looking for Group window**. The game's keybind and menu button then open Seeker, and holding Shift opens the game's window instead.
-- Drag the corner grip down to make the window taller (more cards), or use Ctrl + mouse wheel to scale everything.
+- Drag the window's bottom edge (or its corner grip) down to make it taller (more cards), or use Ctrl + mouse wheel to scale everything.
 - Every setting is also in **Options > AddOns > Seeker LFG**.
 - If you have **Whisper Messenger**, whispers open there.
 
@@ -96,6 +106,7 @@ Install it from CurseForge (the CurseForge app, with WoW Forever picked), or by 
 | `/seeker ignored` | List the players you've hidden |
 | `/seeker hidewords <a, b>` | Hide listings that mention any of these words (leave empty to clear) |
 | `/seeker fill` | Leaders: show the players who'd fill your group's missing roles |
+| `/seeker whispers` / `grouped` | The People tab: whispers while you're listed, or players you've grouped with |
 | `/seeker setup [name]` / `setup save <name>` | Switch to a saved filter setup, or save your current filters |
 | `/seeker note <name> [text]` | Your note on a player (no text removes it) |
 | `/seeker chattest <message>` | Show how Seeker reads a chat message (for bug reports) |

@@ -13,7 +13,6 @@ local L = {
     voiceMode = nil,    -- Enum.LFGEntryVoiceMode
     collapsed = {},     -- activity group -> collapsed
     roles = { tank = false, healer = false, dps = false },
-    savedInstances = {},
 }
 ns.Listing = L
 
@@ -146,6 +145,24 @@ function L.LoadActiveEntry()
     L.dirty = false
 end
 
+-- Create Listing from Browse: start from what you're browsing (its category, and the activities
+-- picked there that you can list for). Not while listed: the page then shows your listing.
+function L.PrefillFromBrowse()
+    if ns.HasListing() then return end
+    local db = ns.db
+    if db.searchSelf or not db.categoryID then return end
+    L.SetCategory(db.categoryID)
+    local any = false
+    for _, id in ipairs(ns.SelectedActivities() or {}) do
+        if L.selected[id] ~= nil then
+            L.selected[id] = true
+            any = true
+        end
+    end
+    L.ResetCollapsed()
+    SetDirty(any)
+end
+
 function L.ClearUI()
     L.categoryID = nil
     wipe(L.selected)
@@ -259,31 +276,9 @@ function ns.RemoveListing()
     end
 end
 
--- Saved instance locks, for the warning icon on activities you're part-way through.
-local function FetchSavedInstances()
-    wipe(L.savedInstances)
-    for i = 1, (GetNumSavedInstances and GetNumSavedInstances() or 0) do
-        local _, _, _, difficultyID, locked, _, _, _, _, _, total, done, _, mapID = GetSavedInstanceInfo(i)
-        L.savedInstances[i] = {
-            mapID = mapID, difficultyID = difficultyID, total = total, done = done,
-            locked = locked and true or false, -- an expired lockout stays listed until reset, unlocked
-            redirected = C_RaidLocks and C_RaidLocks.GetRedirectedDifficultyID and C_RaidLocks.GetRedirectedDifficultyID(mapID, difficultyID),
-        }
-    end
-end
-
-local function InstanceLock(activityID)
-    local a = ns.GetActivity(activityID)
-    if not (a and a.mapID and a.difficultyID) then return end
-    for _, inst in pairs(L.savedInstances) do
-        if inst.locked and inst.mapID == a.mapID and inst.done and inst.done > 0 and inst.total and inst.total > 0 then
-            if inst.difficultyID == a.difficultyID
-                or (inst.redirected ~= nil and inst.redirected == a.redirectedDifficultyID) then
-                return inst.done, inst.total
-            end
-        end
-    end
-end
+-- Saved instance locks (Core.lua), for the warning icon on activities you're part-way through.
+local function FetchSavedInstances() ns.FetchSavedInstances() end
+local function InstanceLock(activityID) return ns.InstanceLock(activityID) end
 
 -- What a dungeon would give you in XP (the 12-level rule): "safe", "partial", "none". Judged by
 -- your party's highest level, as Browse judges it, since that's who'd be running it.
@@ -689,8 +684,11 @@ function ns.RefreshListingPage(filtersChanged)
     if listed then
         local entry = ns.GetListing()
         local n = entry and #entry.activityIDs or 0
+        local whispers = ns.InboxCount and ns.InboxCount() or 0
         page.subtitle:SetText((T["|cff80ff80Listed|r for %s"]):format(n == 1 and ns.GetActivityName(entry.activityIDs[1])
-            or (LFGBROWSE_ACTIVITY_COUNT or T["%d activities"]):format(n)))
+            or (LFGBROWSE_ACTIVITY_COUNT or T["%d activities"]):format(n))
+            .. (whispers > 0 and ("   |cffffd100" .. (whispers == 1 and T["1 whisper: see the People tab"]
+                or (T["%d whispers: see the People tab"]):format(whispers)) .. "|r") or ""))
     else
         page.subtitle:SetText(T["Not listed"])
     end

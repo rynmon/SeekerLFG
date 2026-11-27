@@ -56,6 +56,9 @@ local function Build()
     refreshers[#refreshers + 1] = function() wm:SetEnabled(ns.HasWhisperMessenger()) end
     Toggle(LFG_LIST_IGNORE_SUGGESTED_LEVEL or L["Show all level ranges"], function() return ns.IgnoringLevelRanges() end,
         function(v) ns.SetIgnoreLevelRanges(v) end, L["The game's own setting: also list activities outside your level."])
+    Toggle(L["Collect whispers while I'm listed"], function() return ns.db.whisperInbox ~= false end,
+        function(v) ns.db.whisperInbox = v end,
+        L["Whispers you get while you're listed are kept on the People tab, with Invite buttons. Forever's group finder has no applications: players ask to join by whisper."])
 
     Heading(L["Lists"])
     local sortLabel = U.Text(panel, "GameFontHighlight")
@@ -83,6 +86,18 @@ local function Build()
     Toggle(L["Grey out listings outside the picked activities"], function() return ns.db.filters.greyOutsidePick end,
         function(v) ns.db.filters.greyOutsidePick = v end,
         L["As the game does: listings for activities you haven't picked stay in the list, greyed out at the bottom, instead of being hidden."])
+    Toggle(L["Grey out groups for raids I'm saved to"], function() return ns.db.filters.greySaved end,
+        function(v) ns.db.filters.greySaved = v end,
+        L["Groups listed only for raids or dungeons you're saved to (a boss down) are greyed out at the bottom. Either way they're marked with the game's lockout icon."])
+    Toggle(L["Light up the seat I'd fill"], function() return ns.db.markMySeat ~= false end,
+        function(v) ns.db.markMySeat = v end,
+        L["On a group's card, the first open seat shows one of your roles they still need, lit green. Your roles are the ones on the List yourself page."])
+    Toggle(L["Show how many zones away"], function() return ns.db.zoneHops ~= false end,
+        function(v) ns.db.zoneHops = v end,
+        L["After where a player or group leader is: how many zones they are from their dungeon's entrance, green in its zone through yellow to orange far off. Sort > Closest to the dungeon first puts the nearest at the top."])
+    Toggle(L["Compact cards"], function() return ns.db.compactCards end,
+        function(v) ns.db.compactCards = v end,
+        L["Browse's cards on two lines instead of three: the playstyle and description move to the end of the second line. More cards fit, and their tooltips still show everything."])
 
     -- How activity lists are grouped (Browse's activity menu and the List yourself page).
     local groupLabel = U.Text(panel, "GameFontHighlight")
@@ -161,6 +176,8 @@ local function Build()
     local A = ns.db.alerts
     Toggle(L["Tell me about new matches"], function() return A.enabled end, function(v) A.enabled = v end,
         L["When new groups or players that pass your filters turn up in a search, they're listed in chat."])
+    Toggle(L["Only roles I need"], function() return A.mode ~= "all" end, function(v) A.mode = v and "roles" or "all" end,
+        L["In a party: only players who can play a role it still needs (\"Healer listed: Bob\"). On your own: only groups with room for one of your roles. Off: anything new that passes your filters."])
     Toggle(L["Only ones with full XP"], function() return A.fullXPOnly end, function(v) A.fullXPOnly = v end)
     Toggle(L["Play a sound"], function() return A.sound end, function(v) A.sound = v end)
     Toggle(L["Flash the game's icon"], function() return A.flash end, function(v) A.flash = v end,

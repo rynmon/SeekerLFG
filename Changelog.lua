@@ -7,6 +7,34 @@ local _, ns = ...
 
 ns.CHANGELOG = {
 	{
+		version = "1.1.0",
+		date = "27 November 2026",
+		sections = {
+			{ "New", {
+				{ "Whispers while you're listed.", "Forever's group finder has no applications: players who want in whisper you. While you're listed, those whispers now gather on a new People tab, newest first, each with the player's class, level, roles and where they are (when Seeker knows; the map button finds out), their messages, and Invite, Whisper and Dismiss buttons. The tab counts the ones you haven't seen, and the List yourself page says how many there are. Someone who joins your group comes off the list. Cog > Collect whispers while I'm listed switches it off." },
+				{ "Players you've grouped with.", "Anyone you're in a group with for a few minutes is remembered, with what you ran (the dungeon you went into, or what the group was listed for), when, and how many times. The People tab lists them with a search box, and their cards and tooltips say \"Grouped with you: Dire Maul, 2 days ago\", so good players are easy to find again. Add a note from the list, or forget someone." },
+				{ "Lockouts on group cards.", "Groups for a raid or dungeon you're saved to show the game's lockout icon, and their tooltip says how many bosses you've killed. Groups listed only for ones you're saved to are greyed out at the bottom (Cog > Sort > Grey out groups for raids I'm saved to)." },
+				{ "The seat you'd fill.", "On a group's card, the first open seat shows one of your roles they still need, lit green, and the tooltip says \"Room for you as Healer\". Your roles are the ones on the List yourself page. Cog > Light up the seat I'd fill switches it off." },
+				{ "/seeker whispers and /seeker grouped.", "Open the People tab on either list." },
+			} },
+			{ "Alerts for the roles you need", {
+				{ "Fewer, more useful alerts.", "Alerts no longer list everything new. In a party, you're told when a player lists who can play a role it still needs (\"Healer listed: Bob, level 50 (Maraudon, 2 zones away)\"). On your own, you're told when a group lists with room for one of your roles. Click a name to whisper them. Cog > Alerts > Anything new that passes my filters brings back the old alerts." },
+			} },
+			{ "Fixed", {
+				{ "Alerts announced the same listings again.", "Every search could report most of what was already listed as new (\"32 new: ...\"). Listings are now recognised by their leader and activity, and one whose leader's name hasn't arrived yet isn't announced as \"?\"." },
+			} },
+			{ "Clearer tooltips and cards", {
+				{ "How many zones away.", "Where a player or group leader is now says how many zones they are from their dungeon's entrance, coloured from green (in its zone) through yellow to orange (four or more), as do the group tooltip's members: \"Tanaris (2 zones away)\". Forever's own dungeons count too. Sort > Closest to the dungeon first puts the nearest at the top. Cog > Show how many zones away switches it off." },
+				{ "A clearer dungeon icon.", "Players inside a dungeon show the game's round dungeon badge, larger, instead of the small map pin." },
+				{ "Compact cards.", "Cog > Compact cards puts Browse's cards on two lines instead of three (the playstyle and description join the second line), so more fit." },
+				{ "Drag the window's bottom edge to make it taller.", "The whole edge works now, not just the small grip in the corner, and lights up while you point at it." },
+				{ "A List yourself button on Browse.", "While you're not listed, it sits beside the search button (where Delist is while you're listed), so you don't need to find the eye tab on the right. It starts with what you're browsing: browse Maraudon, click it, and Maraudon is already ticked." },
+				{ "A listing's description stands out.", "It's now under a Description heading, in white, near the top of the tooltip, rather than a grey quote further down. Cards show the start of it at the end of their third line." },
+				{ "Tidier tooltips.", "Each part has its own heading (Looking for, Where, Roles, Group), values sit right after their labels, roles are named beside their icons, and the tooltip's background is solid, so nothing behind it shows through its text." },
+			} },
+		},
+	},
+	{
 		version = "1.0.0",
 		date = "24 November 2026",
 		sections = {

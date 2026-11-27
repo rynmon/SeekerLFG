@@ -22,6 +22,11 @@ local defaults = {
     xpMarks = false,       -- show XP as a symbol (tick, question mark, cross) as well as a colour
     autoRefresh = true,    -- search again on your next click or key press once results are 30s old
     notes = {},            -- first-name key -> { text, name, time }: your notes on players
+    grouped = {},          -- first-name key -> { name, classFile, level, time, what, count }: players you've grouped with
+    markMySeat = true,     -- on group cards, show the open seat you'd fill (one of your roles they still need)
+    compactCards = false,  -- Browse's cards on two lines instead of three, so more fit
+    zoneHops = true,       -- after where someone is: how many zones from their dungeon, coloured
+    whisperInbox = true,   -- collect whispers you get while listed on the People tab
     presets = {},          -- name -> saved filter setup (Setups.lua)
     chat = {               -- groups and players looking in chat (Chat.lua)
         enabled = true,
@@ -30,6 +35,8 @@ local defaults = {
     },
     alerts = {
         enabled = true,    -- tell me about new listings that match my filters
+        mode = "roles",    -- "roles": players for the roles your party needs, or groups with room for
+                           -- you; "all": anything new that passes your filters
         fullXPOnly = false,
         sound = true,
         flash = true,      -- flash the game's taskbar icon when it's in the background
@@ -51,6 +58,7 @@ local defaults = {
         hideIgnored = true,  -- also hide leaders on the game's own ignore list
         hideWords = "",      -- comma-separated: hide listings whose title or note has any of these
         greyOutsidePick = false, -- keep listings outside the picked activities, greyed (as the game does)
+        greySaved = true,    -- grey out groups for raids and dungeons you're already saved to
     },
     who = {                  -- the Who page's filters and sort, kept between sessions
         classesFiltered = {}, -- classID -> true: left out
@@ -406,6 +414,16 @@ local INSTANCE_CONTINENT = {
     [469] = EASTERN,  -- Blackwing Lair
     [309] = EASTERN,  -- Zul'Gurub
     [533] = EASTERN,  -- Naxxramas
+    -- Forever's own dungeons (instance map IDs from its group finder's activities).
+    [2994] = KALIMDOR, -- Alcaz Prison
+    [2974] = KALIMDOR, -- Blackmaw Hold
+    [3001] = KALIMDOR, -- Shaper's Terrace
+    [2999] = EASTERN,  -- Ruins of Lordaeron
+    [2959] = EASTERN,  -- City of Dalaran
+    [2970] = EASTERN,  -- The Drowned City
+    [3039] = EASTERN,  -- Krol'dok Stronghold
+    [2998] = EASTERN,  -- Excavation Site: Wetlands
+    [3065] = EASTERN,  -- Hall of Thanes
 }
 
 -- Fallback for activities without a known map ID: English names (lowercase, substring).
@@ -471,6 +489,9 @@ end
 
 -- Zone name -> continent name, from the game's own map tree.
 local zoneContinent
+local zoneMapID = {}   -- zone name (your language) -> its map ID, for counting zones between places
+local zoneOnContinent = {} -- zone map ID -> its continent's map ID
+local ZONE_TYPE = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
 local function AddContinent(mapID)
     local info = C_Map.GetMapInfo(mapID)
     if not info or not info.name then return end
@@ -480,11 +501,17 @@ local function AddContinent(mapID)
         if child.name and not zoneContinent[child.name] then
             zoneContinent[child.name] = cname
         end
+        if child.name and child.mapID and (child.mapType == nil or child.mapType == ZONE_TYPE) and not zoneMapID[child.name] then
+            zoneMapID[child.name] = child.mapID
+            zoneOnContinent[child.mapID] = mapID
+        end
     end
 end
 
 local function BuildZoneMap()
     zoneContinent = {}
+    wipe(zoneMapID)
+    wipe(zoneOnContinent)
     if not (C_Map and C_Map.GetMapInfo and C_Map.GetMapChildrenInfo) then return end
     local id = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
     local top
@@ -519,7 +546,7 @@ local function BuildInstances()
     for mapID, key in pairs(INSTANCE_CONTINENT) do
         local ok, name = pcall(GetRealZoneText, mapID)
         if ok and name and name ~= "" then
-            instances[BareName(name)] = { name = name, continent = key, raid = RAID_MAPS[mapID] or false }
+            instances[BareName(name)] = { name = name, continent = key, raid = RAID_MAPS[mapID] or false, mapID = mapID }
         end
     end
 end
@@ -592,6 +619,135 @@ function ns.ZoneStatus(zone, activityIDs)
         end
     end
     return status
+end
+
+---------------------------------------------------------------------------
+-- Zones away: how many zone borders between someone and their dungeon's entrance
+---------------------------------------------------------------------------
+-- The zone each dungeon's entrance is in (map IDs, so it works in every language). Blackrock
+-- Mountain counts from both of its zones.
+local ENTRANCE_ZONES = {
+    [389] = { 1454 }, [43] = { 1413 }, [48] = { 1440 }, [47] = { 1413 }, [129] = { 1413 },
+    [209] = { 1446 }, [349] = { 1443 }, [429] = { 1444 }, [249] = { 1445 }, [509] = { 1451 },
+    [531] = { 1451 }, [36] = { 1436 }, [33] = { 1421 }, [34] = { 1453 }, [90] = { 1426 },
+    [189] = { 1420 }, [70] = { 1418 }, [109] = { 1435 }, [230] = { 1427, 1428 },
+    [229] = { 1427, 1428 }, [289] = { 1422 }, [329] = { 1423 }, [409] = { 1427, 1428 },
+    [469] = { 1427, 1428 }, [309] = { 1434 }, [533] = { 1423 },
+    -- Forever's own dungeons.
+    [2994] = { 1445 }, -- Alcaz Prison: Dustwallow Marsh
+    [2974] = { 1447 }, -- Blackmaw Hold: Azshara
+    [3001] = { 1449 }, -- Shaper's Terrace: Un'Goro Crater
+    [2999] = { 1420 }, -- Ruins of Lordaeron: Tirisfal Glades
+    [2959] = { 1416 }, -- City of Dalaran: Alterac Mountains
+    [2970] = { 1434 }, -- The Drowned City: Stranglethorn Vale
+    [3039] = { 2548 }, -- Krol'dok Stronghold: Riverglades
+    [2998] = { 1437 }, -- Excavation Site: Wetlands
+    [3065] = { 1455 }, -- Hall of Thanes: Ironforge
+}
+
+-- Which zones border which, by the ways players walk between them (and Teldrassil's boat).
+local ZONE_LINKS = {
+    -- Kalimdor
+    { 1411, 1454 }, { 1411, 1413 }, { 1454, 1413 }, { 1412, 1456 }, { 1412, 1413 },
+    { 1413, 1440 }, { 1413, 1442 }, { 1413, 1441 }, { 1413, 1445 }, { 1438, 1457 },
+    { 1438, 1439 }, { 1439, 1440 }, { 1440, 1442 }, { 1440, 1448 }, { 1440, 1447 },
+    { 1441, 1444 }, { 1441, 1446 }, { 1442, 1443 }, { 1443, 1444 }, { 1446, 1449 },
+    { 1449, 1451 }, { 1448, 1452 }, { 1448, 1450 }, { 1450, 1452 },
+    -- Eastern Kingdoms
+    { 1429, 1453 }, { 1429, 1436 }, { 1429, 1433 }, { 1429, 1431 }, { 1436, 1431 },
+    { 1431, 1433 }, { 1431, 1434 }, { 1431, 1430 }, { 1430, 1435 }, { 1435, 1419 },
+    { 1433, 1428 }, { 1428, 1427 }, { 1426, 1455 }, { 1426, 1432 }, { 1432, 1437 },
+    { 1432, 1418 }, { 1437, 1417 }, { 1417, 1424 }, { 1417, 1425 }, { 1424, 1425 },
+    { 1424, 1416 }, { 1424, 1421 }, { 1424, 1422 }, { 1416, 1422 }, { 1421, 1420 },
+    { 1420, 1458 }, { 1420, 1422 }, { 1422, 1423 },
+}
+
+local adjacency
+local function Link(a, b)
+    adjacency[a] = adjacency[a] or {}
+    adjacency[b] = adjacency[b] or {}
+    adjacency[a][b], adjacency[b][a] = true, true
+end
+
+-- A zone the table doesn't know (one of Forever's new ones): bordering whatever zones its map
+-- overlaps on the continent's map, when the game can tell.
+local function LinkByMap(id)
+    adjacency[id] = adjacency[id] or {}
+    local cont = zoneOnContinent[id]
+    if not (cont and C_Map.GetMapRectOnMap) then return end
+    local ok, l, r, t, b = pcall(C_Map.GetMapRectOnMap, id, cont)
+    if not (ok and l and r and t and b) then return end
+    for other, oc in pairs(zoneOnContinent) do
+        if other ~= id and oc == cont and adjacency[other] and next(adjacency[other]) then
+            local ok2, l2, r2, t2, b2 = pcall(C_Map.GetMapRectOnMap, other, cont)
+            if ok2 and l2 and l < r2 and l2 < r and t < b2 and t2 < b then Link(id, other) end
+        end
+    end
+end
+
+local function Neighbours(id)
+    if not adjacency then
+        adjacency = {}
+        for _, pair in ipairs(ZONE_LINKS) do Link(pair[1], pair[2]) end
+        -- Zones the table doesn't know, linked both ways now, so they can be walked into too.
+        local unknown = {}
+        for z in pairs(zoneOnContinent) do
+            if not adjacency[z] then unknown[#unknown + 1] = z end
+        end
+        for _, z in ipairs(unknown) do pcall(LinkByMap, z) end
+    end
+    return adjacency[id] or {}
+end
+
+-- The zone (map ID) someone in this place is in: inside a dungeon counts as its entrance's zone.
+local function ZoneMapID(zone)
+    if not zone or zone == "" then return nil end
+    if not zoneContinent or not next(zoneContinent) then BuildZoneMap() end
+    local id = zoneMapID[zone]
+    if id then return id end
+    local inst = ns.InstanceAt(zone)
+    local entrance = inst and inst.mapID and ENTRANCE_ZONES[inst.mapID]
+    return entrance and entrance[1] or nil
+end
+
+local hopsCache = {}
+-- How many zones someone standing in this zone is from the nearest of these dungeons' entrances:
+-- 0 in its zone, 1 next door, and so on. Nil when it can't be told (an unknown zone or dungeon,
+-- or the dungeon's on another continent).
+function ns.ZoneHops(zone, activityIDs)
+    if not zone or zone == "" or not activityIDs or #activityIDs == 0 then return nil end
+    local key = zone .. "|" .. table.concat(activityIDs, ",")
+    local cached = hopsCache[key]
+    if cached ~= nil then return cached or nil end
+    local start = ZoneMapID(zone)
+    local goals, any = {}, false
+    for _, aid in ipairs(activityIDs) do
+        local a = ns.GetActivity(aid)
+        for _, z in ipairs(a and a.mapID and ENTRANCE_ZONES[a.mapID] or {}) do goals[z], any = true, true end
+    end
+    local hops
+    if start and any then
+        -- Breadth first: the fewest borders to cross.
+        local seen, frontier, depth = { [start] = true }, { start }, 0
+        while #frontier > 0 and depth <= 15 do
+            for _, z in ipairs(frontier) do
+                if goals[z] then hops = depth break end
+            end
+            if hops then break end
+            local nextFrontier = {}
+            for _, z in ipairs(frontier) do
+                for n in pairs(Neighbours(z)) do
+                    if not seen[n] then
+                        seen[n] = true
+                        nextFrontier[#nextFrontier + 1] = n
+                    end
+                end
+            end
+            frontier, depth = nextFrontier, depth + 1
+        end
+    end
+    hopsCache[key] = hops or false
+    return hops
 end
 
 -- For a solo player: "near" (same continent as one of their dungeons), "far", or "unknown".
@@ -934,6 +1090,66 @@ function ns.HasHiddenWord(e)
     return false
 end
 
+---------------------------------------------------------------------------
+-- Instance lockouts
+---------------------------------------------------------------------------
+-- The raids (and dungeons) you're saved to, from the game's raid info: Browse marks groups for
+-- them, and the List yourself page warns before you list for one. Only a lockout with a boss
+-- down counts (an expired one stays listed until the reset, unlocked).
+local savedInstances = {}
+
+function ns.FetchSavedInstances()
+    wipe(savedInstances)
+    if not (GetNumSavedInstances and GetSavedInstanceInfo) then return end
+    for i = 1, GetNumSavedInstances() or 0 do
+        local ok, _, _, _, difficultyID, locked, _, _, _, _, _, total, done, _, mapID = pcall(GetSavedInstanceInfo, i)
+        if ok and locked and mapID and (done or 0) > 0 and (total or 0) > 0 then
+            savedInstances[#savedInstances + 1] = {
+                mapID = mapID, difficultyID = difficultyID, total = total, done = done,
+                redirected = C_RaidLocks and C_RaidLocks.GetRedirectedDifficultyID and C_RaidLocks.GetRedirectedDifficultyID(mapID, difficultyID),
+            }
+        end
+    end
+end
+
+-- Bosses down and bosses in all, when you're saved to this activity's instance; else nil.
+function ns.InstanceLock(activityID)
+    if #savedInstances == 0 then return nil end
+    local a = ns.GetActivity(activityID)
+    if not (a and a.mapID and a.difficultyID) then return nil end
+    for _, inst in ipairs(savedInstances) do
+        if inst.mapID == a.mapID and (inst.difficultyID == a.difficultyID
+            or (inst.redirected ~= nil and inst.redirected == a.redirectedDifficultyID)) then
+            return inst.done, inst.total
+        end
+    end
+end
+
+-- A group's activities you're saved to: { { id, done, total }, ... }, and whether that's all of them.
+function ns.EntryLocks(e)
+    local locks = {}
+    for _, id in ipairs(e.activityIDs or {}) do
+        local done, total = ns.InstanceLock(id)
+        if done then locks[#locks + 1] = { id = id, done = done, total = total } end
+    end
+    return locks, #locks > 0 and #locks == #(e.activityIDs or {})
+end
+
+do
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+    ev:RegisterEvent("UPDATE_INSTANCE_INFO")
+    pcall(ev.RegisterEvent, ev, "BOSS_KILL")
+    ev:SetScript("OnEvent", function(_, event)
+        if event == "UPDATE_INSTANCE_INFO" then
+            ns.FetchSavedInstances()
+            if ns.QueueRender then ns.QueueRender() end
+        elseif RequestRaidInfo then
+            RequestRaidInfo() -- answered with UPDATE_INSTANCE_INFO
+        end
+    end)
+end
+
 -- Open seats by role, from the game's own counts when it gives them.
 function ns.Remaining(e, role)
     -- A group from chat: the roles its message asked for (none named, so it could be anything).
@@ -992,6 +1208,9 @@ local function Passes(e, f)
         return false
     end
 
+    -- Zones between the leader and the dungeon's entrance (cards, tooltips, the Closest sort).
+    local okH, hops = pcall(ns.ZoneHops, e.leader and e.leader.areaName, RelevantActivities(e))
+    e.hops = okH and hops or nil
     if e.isSolo then
         e.distance = "unknown"
         pcall(ns.EvaluateDistance, e)
@@ -1008,6 +1227,10 @@ local function Passes(e, f)
             if not (cls and f.classes[cls]) then return false end
         end
     else
+        -- Saved to every activity it's listed for: you couldn't go in with them. Marked, and with
+        -- that option on, greyed out at the bottom.
+        e.savedLocks, e.savedAll = ns.EntryLocks(e)
+        if e.savedAll and f.greySaved then e.lockedOut = true end
         local open = e.maxPlayers - e.numMembers
         if f.hideFull and open <= 0 then return false end
         local need = f.groupNeeds
@@ -1034,6 +1257,7 @@ ns.SORT_MODES = {
     { key = "levelLow", label = L["Level, low to high"] },
     { key = "levelHigh", label = L["Level, high to low"] },
     { key = "size", label = L["Biggest groups first"] },
+    { key = "closest", label = L["Closest to the dungeon first"] },
     { key = "fit", label = L["Best fit for my roles (the game's order)"] },
 }
 
@@ -1046,8 +1270,7 @@ local function Social(e) return (e.friends or 0) + (e.guildmates or 0) end
 local DUNGEON_EXPECTED = { TANK = 1, HEALER = 1, DAMAGER = 3 }
 function ns.FitContext()
     local ctx = { order = { "TANK", "HEALER", "DAMAGER" } }
-    local ok, roles = pcall(function() return C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles() end)
-    ctx.roles = ok and roles or {}
+    ctx.roles = ns.MyListedRoles() or {}
     local listing = ns.HasListing() and ns.GetListing()
     local dungeonRoles = false
     for _, id in ipairs(listing and listing.activityIDs or {}) do
@@ -1082,6 +1305,17 @@ function ns.ComputeFit(e, ctx)
         e.fitHeal = (c.HEALER_REMAINING or 0) > 0 and my.healer and true or false
         local fitDPS = (c.DAMAGER_REMAINING or 0) > 0 and my.dps and true or false
         e.fitSlot = e.fitTank or e.fitHeal or fitDPS
+        -- For the card and tooltip: which of your roles they still have a seat for (chat groups by
+        -- the roles their message asked for).
+        e.myFit = nil
+        if not e.isSelf and not e.isDelisted then
+            for _, role in ipairs({ "tank", "healer", "dps" }) do
+                if my[role] and ns.Remaining(e, role) > 0 then
+                    e.myFit = e.myFit or {}
+                    e.myFit[#e.myFit + 1] = role
+                end
+            end
+        end
     end
 end
 
@@ -1098,10 +1332,20 @@ local function FitBefore(a, b)
     return nil
 end
 
+-- Closeness to the dungeon, for the Closest sort: inside it -1, then zones away, unknown 50,
+-- another continent 99.
+local function Closeness(e)
+    if e.inDungeon then return -1 end
+    if e.hops then return e.hops end
+    if e.distance == "far" then return 99 end
+    return 50
+end
+
 local function SortEntries(a, b)
     if a.isSelf ~= b.isSelf then return a.isSelf end
     -- Delisted, or outside your picked activities: greyed out, at the bottom.
-    local da, db = (a.isDelisted or a.outsidePick) and true or false, (b.isDelisted or b.outsidePick) and true or false
+    local da = (a.isDelisted or a.outsidePick or a.lockedOut) and true or false
+    local db = (b.isDelisted or b.outsidePick or b.lockedOut) and true or false
     if da ~= db then return db end
     -- Group finder listings before chat posts (which say less, and may be stale).
     if (a.fromChat or false) ~= (b.fromChat or false) then return b.fromChat or false end
@@ -1128,6 +1372,10 @@ local function SortEntries(a, b)
         end
     elseif mode == "size" then
         if a.numMembers ~= b.numMembers then return a.numMembers > b.numMembers end
+    elseif mode == "closest" then
+        -- Inside the dungeon, then by zones away; another continent and unknown last.
+        local ha, hb = Closeness(a), Closeness(b)
+        if ha ~= hb then return ha < hb end
     end
     local ra, rb = XP_RANK[a.xpStatus] or 0, XP_RANK[b.xpStatus] or 0
     if ra ~= rb then return ra > rb end
@@ -1204,6 +1452,30 @@ function ns.MyGroupUnits()
     return units
 end
 
+-- The roles your party still needs: { tank, healer, dps }, all false when it's full; nil when
+-- you're not in one. A dungeon party wants a tank, a healer and three DPS; a raid always takes
+-- DPS. You count as the role you're listed as when you haven't been given one. Also returns
+-- whether anyone has no role (a role check makes it more accurate).
+function ns.MyGroupNeeds()
+    if not IsInGroup() then return nil end
+    local units = ns.MyGroupUnits()
+    local inRaid = IsInRaid and IsInRaid()
+    if not inRaid and #units >= 5 then return { tank = false, healer = false, dps = false }, false end
+    local t, h, d, unassigned = 0, 0, 0, false
+    for _, unit in ipairs(units) do
+        local r = UnitGroupRolesAssigned(unit)
+        if (not r or r == "NONE") and UnitIsUnit(unit, "player") then
+            local mine = ns.MyListedRoles()
+            local n = mine and ((mine.tank and 1 or 0) + (mine.healer and 1 or 0) + (mine.dps and 1 or 0)) or 0
+            if n == 1 then r = mine.tank and "TANK" or mine.healer and "HEALER" or "DAMAGER" end
+        end
+        if r == "TANK" then t = t + 1 elseif r == "HEALER" then h = h + 1 elseif r == "DAMAGER" then d = d + 1
+        else unassigned = true end
+    end
+    if inRaid then return { tank = t < 2, healer = h < 5, dps = true }, unassigned end
+    return { tank = t == 0, healer = h == 0, dps = d < 3 }, unassigned
+end
+
 -- The highest level in your party (just you when you're alone).
 function ns.MyGroupMaxLevel()
     local best = 0
@@ -1269,9 +1541,24 @@ function ns.BuildMyGroupEntry()
         maxLevel = maxL, minLevel = minL,
         friends = 0, guildmates = 0,
     }
-    local okR, roles = pcall(function() return C_LFGListRoles and C_LFGListRoles.GetRoles and C_LFGListRoles.GetRoles() end)
-    e.roles = okR and roles or nil
+    e.roles = ns.MyListedRoles()
     return e
+end
+
+-- The roles you're listed (or about to list) as: the game's, else your saved ones, else the List
+-- yourself page's ticks. A table with none ticked counts as none (the game can answer with one).
+local function AnyRole(r)
+    return type(r) == "table" and (r.tank or r.healer or r.dps) and r or nil
+end
+
+function ns.MyListedRoles()
+    local api = C_LFGListRoles or {}
+    for _, fn in ipairs({ api.GetRoles, api.GetSavedRoles }) do
+        local ok, r = pcall(fn)
+        if ok and AnyRole(r) then return r end
+    end
+    local page = ns.Listing and ns.Listing.roles
+    return AnyRole(page) and { tank = page.tank, healer = page.healer, dps = page.dps } or nil
 end
 
 function ns.GetFiltered()
@@ -1281,7 +1568,11 @@ function ns.GetFiltered()
     if mine then
         for _, list in ipairs({ groups, players }) do
             for i = #list, 1, -1 do
-                if list[i].isSelf then table.remove(list, i) end
+                if list[i].isSelf then
+                    -- The game's own result knows the roles you listed as, if nothing else did.
+                    if not AnyRole(mine.roles) and AnyRole(list[i].roles) then mine.roles = list[i].roles end
+                    table.remove(list, i)
+                end
             end
         end
         if mine.isSolo then table.insert(players, 1, mine) else table.insert(groups, 1, mine) end
@@ -1299,6 +1590,15 @@ function ns.GetFiltered()
         for _, e in ipairs(cg) do groups[#groups + 1] = e end
         for _, e in ipairs(cp) do players[#players + 1] = e end
     end
+    -- Everyone with a listing or chat post right now, filtered or not, by first name.
+    local listedNow = {}
+    for _, list in ipairs({ groups, players }) do
+        for _, e in ipairs(list) do
+            local key = not e.isSelf and e.leaderName and ns.LocationKey(e.leaderName)
+            if key then listedNow[key] = e end
+        end
+    end
+    ns.listedNow = listedNow
     local f = ns.db.filters
     local fg, fp = {}, {}
     local ctx = ns.FitContext()
@@ -1689,6 +1989,18 @@ end
 -- so loosening a filter doesn't announce listings you could have seen all along.
 local seenBySearch = {}
 
+-- A listing's lasting identity: its leader and what it's for. The game can number the same
+-- listing differently from one search to the next, so the result ID alone made everything
+-- "new" again. Nil while the game hasn't sent the leader's name yet.
+local function ListingKey(e)
+    local who = pcall(LeaderKey, e.leaderName) and LeaderKey(e.leaderName)
+    if not who then return nil end
+    local acts = {}
+    for i, id in ipairs(e.activityIDs or {}) do acts[i] = id end
+    table.sort(acts)
+    return who .. "|" .. table.concat(acts, ",")
+end
+
 local function AlertSound()
     local kit = SOUNDKIT and (SOUNDKIT.UI_GROUP_FINDER_RECEIVE_APPLICATION or SOUNDKIT.RAID_WARNING or SOUNDKIT.READY_CHECK)
     if kit then PlaySound(kit, "Master") end
@@ -1705,12 +2017,17 @@ function ns.CheckNewMatches(searchKey)
         seen = {}
         seenBySearch[searchKey] = seen
     end
-    local getter = LFG.GetFilteredSearchResults or LFG.GetSearchResults
+    -- Everything the search found, filtered out or not, by its leader and activities.
     local all = {}
-    if getter then
-        local _, results = getter()
-        if type(results) == "table" then
-            for _, id in ipairs(results) do all[id] = true end
+    local okAll, allGroups, allPlayers = pcall(ns.Collect)
+    if okAll then
+        for _, list in ipairs({ allGroups, allPlayers }) do
+            for _, e in ipairs(list) do
+                local key = ListingKey(e)
+                if key then all[key] = true end
+                -- And by result ID: one seen before its leader's name arrived isn't new once it does.
+                if e.id then all["#" .. tostring(e.id)] = true end
+            end
         end
     end
     local ok, groups, players = pcall(ns.GetFiltered)
@@ -1718,14 +2035,18 @@ function ns.CheckNewMatches(searchKey)
     local fresh = {}
     for _, list in ipairs({ groups, players }) do
         for _, e in ipairs(list) do
-            if primed and not seen[e.id] and not e.isSelf and not e.isDelisted and not e.outsidePick and not e.fromChat
-                and (not a.fullXPOnly or e.xpStatus == "safe") then
+            -- One whose leader the game hasn't named yet isn't announced (nothing to say who);
+            -- it's announced once its name arrives, if it's still new then.
+            local key = ListingKey(e)
+            if primed and key and not seen[key] and not seen["#" .. tostring(e.id)] and not e.isSelf and not e.isDelisted and not e.outsidePick
+                and not e.fromChat and (not a.fullXPOnly or e.xpStatus == "safe") then
                 fresh[#fresh + 1] = e
             end
         end
     end
-    for id in pairs(all) do seen[id] = true end
+    for key in pairs(all) do seen[key] = true end
     if not a.enabled or #fresh == 0 then return end
+    if a.mode ~= "all" then return ns.AlertRoles(fresh, a) end
 
     local parts = {}
     for i = 1, math.min(3, #fresh) do
@@ -1737,6 +2058,63 @@ function ns.CheckNewMatches(searchKey)
     end
     local more = #fresh > 3 and (L[" and %d more"]):format(#fresh - 3) or ""
     ns.Print((L["%d new: %s%s. |cff999999/seeker to open|r"]):format(#fresh, table.concat(parts, ", "), more))
+    if a.sound then AlertSound() end
+    if a.flash and FlashClientIcon then FlashClientIcon() end
+end
+
+-- The roles alerts: in a party, new players who can play a role it still needs ("Healer listed:
+-- Bob"); on your own, new groups with a seat for one of your roles. Names are links: click one
+-- to whisper them.
+local ROLE_WORDS = { tank = TANK or L["Tank"], healer = HEALER or L["Healer"], dps = DAMAGER or L["DPS"] }
+
+local function NameLink(e)
+    local full = e.leaderName or "?"
+    local short = ns.ShortName and ns.ShortName(full) or full
+    return ("|Hplayer:%s|h[%s]|h"):format(full, short)
+end
+
+local function WhereBit(e)
+    local act = e.xpActivity or RelevantActivities(e)[1]
+    local bits = { act and ns.GetActivityName(act) or nil }
+    if e.inDungeon then
+        bits[#bits + 1] = L["inside"]
+    elseif e.hops then
+        bits[#bits + 1] = e.hops == 0 and L["same zone"] or e.hops == 1 and L["1 zone away"] or (L["%d zones away"]):format(e.hops)
+    end
+    return table.concat(bits, ", ")
+end
+
+function ns.AlertRoles(fresh, a)
+    local lines = {}
+    local need = ns.MyGroupNeeds()
+    if need then
+        -- In a party: players who can fill what it's missing.
+        for _, e in ipairs(fresh) do
+            if e.isSolo and e.roles then
+                local can = {}
+                for _, key in ipairs({ "tank", "healer", "dps" }) do
+                    if need[key] and e.roles[key] then can[#can + 1] = ROLE_WORDS[key] end
+                end
+                if #can > 0 then
+                    lines[#lines + 1] = (L["%s listed: %s, level %s (%s)"]):format(table.concat(can, "/"), NameLink(e),
+                        e.maxLevel and tostring(e.maxLevel) or "?", WhereBit(e))
+                end
+            end
+        end
+    else
+        -- On your own: groups with a seat for you.
+        for _, e in ipairs(fresh) do
+            if not e.isSolo and e.myFit and #e.myFit > 0 then
+                local as = {}
+                for _, key in ipairs(e.myFit) do as[#as + 1] = ROLE_WORDS[key] end
+                lines[#lines + 1] = (L["Room for you as %s: %s's group, %d/%d, level %s (%s)"]):format(table.concat(as, "/"),
+                    NameLink(e), e.numMembers, e.maxPlayers, e.maxLevel and tostring(e.maxLevel) or "?", WhereBit(e))
+            end
+        end
+    end
+    if #lines == 0 then return end
+    for i = 1, math.min(3, #lines) do ns.Print(lines[i]) end
+    if #lines > 3 then ns.Print((L["...and %d more. |cff999999/seeker to open|r"]):format(#lines - 3)) end
     if a.sound then AlertSound() end
     if a.flash and FlashClientIcon then FlashClientIcon() end
 end

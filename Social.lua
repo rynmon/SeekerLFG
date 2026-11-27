@@ -194,14 +194,8 @@ function ns.FillMyGroup()
         ns.Print(L["Your party is full."])
         return
     end
-    local t, h, d = 0, 0, 0
-    for _, unit in ipairs(units) do
-        local r = UnitGroupRolesAssigned(unit)
-        if r == "TANK" then t = t + 1 elseif r == "HEALER" then h = h + 1 elseif r == "DAMAGER" then d = d + 1 end
-    end
-    local need = { tank = t == 0, healer = h == 0, dps = d < 3 }
-    local unassigned = (t + h + d) < #units
-    if inRaid then need = { tank = t < 2, healer = h < 5, dps = true } end
+    local need, unassigned = ns.MyGroupNeeds()
+    need = need or { tank = true, healer = true, dps = true } -- alone: anyone
     if not (need.tank or need.healer or need.dps) then need.dps = true end
 
     local F = ns.db.filters
